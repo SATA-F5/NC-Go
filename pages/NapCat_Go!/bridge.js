@@ -42,6 +42,7 @@ let statusFetching = false;
 let logFetching = false;
 let isWindows = false;
 let lastStatus = null;
+let configModalOpen = false;
 let downloadHideTimer = null;
 let lastDownloading = false;
 
@@ -404,6 +405,14 @@ function updateStatus(d) {
     setText(els.napcatDir, d.napcat_config_dir || '未找到', d.napcat_config_dir ? 'ok' : 'err');
 
     const cfg = d.config || {};
+    // 仅在配置弹窗未打开时由轮询回填，避免用户编辑到一半被默认值覆写
+    if (!configModalOpen) populateConfigForm(cfg);
+
+    updateGuide(d);
+}
+
+function populateConfigForm(cfg) {
+    cfg = cfg || {};
     if ($('cfg-napcat-dir')) $('cfg-napcat-dir').value = cfg.napcat_config_dir || '';
     if ($('cfg-astrbot-path')) $('cfg-astrbot-path').value = cfg.astrbot_config_path || '';
     if ($('cfg-qq-number')) $('cfg-qq-number').value = cfg.qq_number || '';
@@ -413,8 +422,6 @@ function updateStatus(d) {
     if ($('cfg-docker-tag')) $('cfg-docker-tag').value = cfg.docker_tag || 'latest';
     if ($('cfg-docker-container')) $('cfg-docker-container').value = cfg.docker_container_name || 'napcat-go';
     // ★ 注意：sudo 密码框绝不回填，避免轮询覆盖用户输入
-
-    updateGuide(d);
 }
 
 function updateDownloadPanel(dl) {
@@ -660,12 +667,20 @@ function closeWebUIDetails() {
     if (els.webuiDetails) els.webuiDetails.open = false;
 }
 
-function openConfig() {
+async function openConfig() {
+    configModalOpen = true;
     if (els.modal) els.modal.classList.add('visible');
-    refreshStatus();
+    // 打开时主动拉一次并填充表单；之后轮询不再覆写，直到关闭/保存
+    try {
+        if (bridge) {
+            const d = await bridge.apiGet('status');
+            if (d && d.config) populateConfigForm(d.config);
+        }
+    } catch (e) { /* 静默失败，保留当前输入 */ }
 }
 
 function closeConfig() {
+    configModalOpen = false;
     if (els.modal) els.modal.classList.remove('visible');
 }
 
