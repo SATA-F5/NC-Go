@@ -1230,6 +1230,11 @@
 
         function finish() {
             try { localStorage.setItem(STORAGE_KEY, '1'); } catch (e) {}
+            // 持久化到后端配置，保证换浏览器/清缓存后不再重复弹出
+            try {
+                var b = window.AstrBotPluginPage;
+                if (b && b.apiPost) { b.apiPost('onboarding/done').catch(function(){}); }
+            } catch (e) {}
             close();
         }
 
@@ -1246,9 +1251,7 @@
             if (ob.classList.contains('with-spotlight')) positionSpotlight();
         });
 
-        // 启动判断
-        var shouldShow = true;
-        try { shouldShow = localStorage.getItem(STORAGE_KEY) !== '1'; } catch (e) {}
+        // 启动判断：优先读后端配置 onboarding_done，localStorage 仅作本地缓存兜底
         var rendered = false;
         function bootRender() {
             if (rendered) return;
@@ -1256,14 +1259,40 @@
             ob.classList.add('visible');
             setTimeout(render, 200);
         }
-        if (shouldShow) {
-            if (document.readyState === 'complete') {
-                setTimeout(bootRender, 300);
-            } else {
-                window.addEventListener('load', function () { setTimeout(bootRender, 250); });
-                setTimeout(bootRender, 1500); // 兜底
-            }
+
+        function waitForBridge(cb, timeoutMs) {
+            var start = Date.now();
+            (function check() {
+                var b = window.AstrBotPluginPage;
+                if (b && typeof b.ready === 'function') { cb(b); return; }
+                if (Date.now() - start > timeoutMs) { cb(null); return; }
+                setTimeout(check, 100);
+            })();
         }
+
+        waitForBridge(function (b) {
+            if (!b) {
+                // bridge 不可用，退化为 localStorage 判断
+                var localDone = false;
+                try { localDone = localStorage.getItem(STORAGE_KEY) === '1'; } catch (e) {}
+                if (!localDone) bootRender();
+                return;
+            }
+            b.ready().then(function () {
+                return b.apiGet('config');
+            }).then(function (cfg) {
+                if (cfg && cfg.onboarding_done) {
+                    try { localStorage.setItem(STORAGE_KEY, '1'); } catch (e) {}
+                    return; // 后端标记已完成，不显示
+                }
+                bootRender();
+            }).catch(function () {
+                // 接口失败，退化为 localStorage
+                var localDone = false;
+                try { localDone = localStorage.getItem(STORAGE_KEY) === '1'; } catch (e) {}
+                if (!localDone) bootRender();
+            });
+        }, 8000);
     })();
     </script>
 </body>

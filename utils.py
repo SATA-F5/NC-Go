@@ -20,9 +20,10 @@ PLUGIN_NAME = "pulid_napcat_go_to_astrbot"
 CONFIG_VERSION = 4
 
 NAPCAT_RELEASE_BASE = "https://github.com/NapNeko/NapCatQQ/releases/download"
+NAPCAT_LINUX_LAUNCHER_CPP = "https://raw.githubusercontent.com/NapNeko/napcat-linux-launcher/refs/heads/main/launcher.cpp"
 NAPCAT_INSTALL_SH_ORIGINAL = "https://raw.githubusercontent.com/NapNeko/napcat-linux-installer/refs/heads/main/install.sh"
 NAPCAT_INSTALL_SH_LEGACY = "https://raw.githubusercontent.com/NapNeko/napcat-linux-installer/main/install.sh"
-DEFAULT_NAPCAT_VERSION = "v4.18.28"
+DEFAULT_NAPCAT_VERSION = "latest"
 DEFAULT_DOWNLOAD_MIRROR = "https://gh.zwy.one/"
 
 NAPCAT_MIRROR_CANDIDATES = [
@@ -107,6 +108,7 @@ DEFAULT_CONFIG = {
     "docker_tag": DEFAULT_DOCKER_TAG,
     "docker_container_name": DEFAULT_DOCKER_CONTAINER,
     "sudo_password": "",
+    "onboarding_done": False,
 }
 
 CREATE_NO_WINDOW = 0x08000000

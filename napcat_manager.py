@@ -394,24 +394,46 @@ class NapCatManager(DownloadMixin):
             "current_index": 0, "total_mirrors": 0, "phase": "idle", "message": "",
         })
 
-    def _build_fake_sudo(self, tag: str, env: Dict[str, str]) -> Optional[Path]:
-        pw = (self.plugin.config.get("sudo_password", "") or "").strip()
-        if not pw:
-            return None
-        real_sudo = shutil.which("sudo") or "/usr/bin/sudo"
+    # ----- sudo 凭证：仅通过 stdin 喂密码，不落盘 -----
+
+    def _sudo_warm_sync(self, pw: str) -> bool:
+        """同步预热 sudo 凭证缓存（sudo -S -v），密码仅走 stdin，不写盘。"""
+        if IS_WINDOWS or not pw or not shutil.which("sudo"):
+            return False
         try:
-            fake_bin = self.napcat_dir / f".ncgo_bin_{tag}"
-            fake_bin.mkdir(parents=True, exist_ok=True)
-            os.chmod(fake_bin, 0o700)
-            w = fake_bin / "sudo"
-            safe = pw.replace("'", "'\\''")
-            w.write_text("#!/bin/sh\n" f"printf '%s\\n' '{safe}' | '{real_sudo}' -S \"$@\"\n")
-            os.chmod(w, 0o700)
-            env["PATH"] = f"{fake_bin}:{env.get('PATH', os.environ.get('PATH', ''))}"
-            return fake_bin
-        except Exception as e:
-            self.log_lines.append(f"[deps] ⚠ 创建 sudo 包装脚本({tag})失败: {e}")
-            return None
+            r = subprocess.run(
+                ["sudo", "-S", "-v"],
+                input=(pw + "\n").encode(),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=20,
+            )
+            return r.returncode == 0
+        except Exception:
+            return False
+
+    async def _sudo_warm_async(self, pw: str) -> bool:
+        """异步预热 sudo 凭证缓存（sudo -S -v），密码仅走 stdin，不写盘。"""
+        if IS_WINDOWS or not pw or not shutil.which("sudo"):
+            return False
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "sudo", "-S", "-v",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(
+                    proc.communicate(input=(pw + "\n").encode()),
+                    timeout=20,
+                )
+            except asyncio.TimeoutError:
+                try: proc.kill()
+                except Exception: pass
+                return False
+            return proc.returncode == 0
+        except Exception:
+            return False
 
     def _migrate_legacy(self):
         if not self.legacy_napcat_dir.exists():

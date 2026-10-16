@@ -219,9 +219,10 @@ class ConfigSyncer:
             return
 
         env = {**os.environ}
-        fake_bin = self.plugin.manager._build_fake_sudo("prechown", env)
-        if not fake_bin and not shutil.which("sudo"):
+        pw = (self.plugin.config.get("sudo_password", "") or "").strip()
+        if not pw or not shutil.which("sudo"):
             return
+        self.plugin.manager._sudo_warm_sync(pw)
 
         try:
             r = subprocess.run(
@@ -238,22 +239,16 @@ class ConfigSyncer:
                 )
         except Exception as e:
             logger.warning(f"[NapCat_Go] pre-sync chown failed: {e}")
-        finally:
-            if fake_bin and fake_bin.exists():
-                shutil.rmtree(fake_bin, ignore_errors=True)
 
         try:
             parent = self.napcat_config_dir.parent
             if parent and parent.exists() and parent != self.napcat_config_dir:
                 env2 = {**os.environ}
-                fake2 = self.plugin.manager._build_fake_sudo("prechown2", env2)
                 subprocess.run(
                     ["sudo", "chown", "-R", f"{uid}:{gid}", str(parent)],
                     env=env2, timeout=30, stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
-                if fake2 and fake2.exists():
-                    shutil.rmtree(fake2, ignore_errors=True)
         except Exception:
             pass
 

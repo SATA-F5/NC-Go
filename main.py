@@ -77,6 +77,7 @@ class NapCatGoPlugin(Star):
         _reg(f"/{PLUGIN_NAME}/logs", self.api_get_logs, ["GET"], "Get logs")
         _reg(f"/{PLUGIN_NAME}/open-webui", self.api_open_webui, ["POST"], "Open WebUI")
         _reg(f"/{PLUGIN_NAME}/cleanup", self.api_cleanup, ["POST"], "Cleanup")
+        _reg(f"/{PLUGIN_NAME}/onboarding/done", self.api_onboarding_done, ["POST"], "Mark onboarding done")
 
         _final_log = {**self.config, "sudo_password": "***" if self.config.get("sudo_password") else ""}
         logger.info(f"[NapCat_Go] FINAL CONFIG: {_final_log}")
@@ -303,6 +304,11 @@ class NapCatGoPlugin(Star):
             return json_response({"ok": True, "message": "Cleaned"})
         except Exception as e:
             return error_response(f"Cleanup failed: {e}")
+
+    async def api_onboarding_done(self):
+        self.config["onboarding_done"] = True
+        self._save_config(self.config)
+        return json_response({"ok": True})
 
     # ---------- config ----------
 
