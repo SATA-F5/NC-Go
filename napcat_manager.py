@@ -26,7 +26,7 @@ from .utils import (
     build_docker_run_args,
     detect_docker_binary,
     get_linux_qq_version, get_linux_qq_build_code,
-    is_linux_qq_version_compatible,
+    is_linux_qq_version_compatible, is_qq_installed,
     NAPCAT_SUPPORTED_QQ_MIN, NAPCAT_SUPPORTED_QQ_MAX,
 )
 from .download import DownloadMixin
@@ -553,12 +553,8 @@ class NapCatManager(DownloadMixin):
 
             if IS_WINDOWS:
                 if not self._find_entry():
-                    if not await self.download_napcat():
-                        self.log_lines.append("[start] ✘ 下载失败")
-                        return False
-                    if not self._find_entry():
-                        self.log_lines.append("[start] 下载完成但入口文件仍缺失")
-                        return False
+                    self.log_lines.append("[start] ✘ 未检测到已安装的 NapCat，请先在网页界面选择版本并安装")
+                    return False
 
                 from .utils import is_qq_installed
                 if not is_qq_installed():
@@ -585,13 +581,8 @@ class NapCatManager(DownloadMixin):
                 root = self._find_new_style_root()
 
                 if not root:
-                    self.log_lines.append("[start] 未检测到新方案，开始安装 NapCat ...")
-                    if not await self.install_linux_napcat():
-                        return False
-                    root = self._find_new_style_root()
-                    if not root:
-                        self.log_lines.append("[start] ✘ 安装后仍未找到")
-                        return False
+                    self.log_lines.append("[start] ✘ 未检测到已安装的 NapCat，请先在网页界面选择版本并安装")
+                    return False
 
                 self.log_lines.append(f"[start] ⚡ 使用新方案目录: {root}")
 
@@ -600,9 +591,10 @@ class NapCatManager(DownloadMixin):
                     self.log_lines.append("[start] ✘ 未配置 sudo 密码或系统无 sudo")
                     return False
 
+                # QQ 检测：未装或不兼容时自动 purge + 装推荐版
                 qq_ok = await self.ensure_linux_qq_compatible()
                 if not qq_ok:
-                    self.log_lines.append("[start] ✘ LinuxQQ 版本不兼容或安装失败，无法继续")
+                    self.log_lines.append("[start] ✘ LinuxQQ 未就绪（未安装或不兼容）")
                     self.log_lines.append(f"[start] 兼容 build 范围: [{NAPCAT_SUPPORTED_QQ_MIN}, {NAPCAT_SUPPORTED_QQ_MAX}]")
                     return False
                 self.log_lines.append(
@@ -610,8 +602,37 @@ class NapCatManager(DownloadMixin):
                     f"(build {get_linux_qq_build_code()})"
                 )
 
+                # 依赖检测：g++（编译 launcher.so）+ Xvfb（虚拟显示），缺了自动装
+                missing_deps = []
+                if not shutil.which("g++"):
+                    missing_deps.append("g++")
                 if not shutil.which("Xvfb"):
-                    self.log_lines.append("[start] ⚠ 未检测到 Xvfb")
+                    missing_deps.append("xvfb")
+                if missing_deps:
+                    self.log_lines.append(f"[start] 缺少依赖: {', '.join(missing_deps)}，自动安装 ...")
+                    env_dep = {**os.environ, "TERM": "dumb", "DEBIAN_FRONTEND": "noninteractive"}
+                    try:
+                        proc = await asyncio.create_subprocess_exec(
+                            "sudo", "-S", "apt-get", "install", "-y", *missing_deps,
+                            stdin=asyncio.subprocess.PIPE,
+                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                            env=env_dep,
+                        )
+                        out, _ = await asyncio.wait_for(
+                            proc.communicate(input=(pw + "\n").encode()), timeout=300,
+                        )
+                        if proc.returncode == 0:
+                            self.log_lines.append(f"[start] ✔ 依赖安装成功: {', '.join(missing_deps)}")
+                        else:
+                            tail = (out or b"").decode("utf-8", "ignore")[-200:]
+                            self.log_lines.append(f"[start] ✘ 依赖安装失败: {tail}")
+                            return False
+                    except Exception as e:
+                        self.log_lines.append(f"[start] ✘ 依赖安装异常: {e}")
+                        return False
+
+                if not shutil.which("Xvfb"):
+                    self.log_lines.append("[start] ⚠ 仍未检测到 Xvfb")
 
                 qq_real, qq_dir = self._find_qq_binary(root)
                 if not qq_dir:
@@ -917,6 +938,54 @@ class NapCatManager(DownloadMixin):
         if IS_WINDOWS:
             return self._find_entry() is not None
         return self._find_new_style_root() is not None
+
+    async def uninstall_napcat(self, purge_qq: bool = False) -> bool:
+        """卸载当前 NapCat：先停进程，再删除 napcat 目录（native）或容器（docker）。
+
+        purge_qq=True 时，native/Linux 模式下额外 dpkg --purge linuxqq。
+        """
+        try:
+            await self.stop()
+        except Exception as e:
+            self.log_lines.append(f"[uninstall] 停止 NapCat 异常: {e}")
+
+        if self.deploy_mode == "docker":
+            name = self.docker_container_name()
+            code, out = await self._docker_cmd("rm", "-f", name, timeout=60)
+            if code == 0:
+                self.log_lines.append(f"[uninstall] ✔ 已删除 Docker 容器: {name}")
+            else:
+                self.log_lines.append(f"[uninstall] ⚠ 删除容器返回 {code}: {out[-160:]}")
+            return code == 0
+
+        # native / windows
+        try:
+            self._cleanup_processes()
+            self._kill_root_remnants()
+        except Exception:
+            pass
+
+        removed: List[str] = []
+        for d in (self.napcat_dir, self.legacy_napcat_dir):
+            try:
+                if d.exists():
+                    shutil.rmtree(d, ignore_errors=True)
+                    d.mkdir(parents=True, exist_ok=True)
+                    removed.append(str(d))
+            except Exception as e:
+                self.log_lines.append(f"[uninstall] 删除 {d} 失败: {e}")
+
+        if purge_qq and not IS_WINDOWS:
+            try:
+                await self._purge_linuxqq()
+            except Exception as e:
+                self.log_lines.append(f"[uninstall] purge LinuxQQ 异常: {e}")
+
+        self.log_lines.append(
+            f"[uninstall] ✔ 已卸载 NapCat: {', '.join(removed) or '(无目录)'}"
+            + ("（已附带卸载 LinuxQQ）" if purge_qq and not IS_WINDOWS else "")
+        )
+        return True
 
     def cleanup(self):
         if self.deploy_mode == "docker":

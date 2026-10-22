@@ -180,6 +180,45 @@ class DownloadMixin:
                 self.log_lines.append(f"[download] ⚠ 获取 checksum 失败({e})，跳过哈希校验")
         return result
 
+    async def list_napcat_releases(self) -> List[Dict[str, Any]]:
+        """通过 GitHub API 列出 NapCat 可下载版本（最近 30 条）。
+
+        返回 [{tag, name, published_at, prerelease}, ...]，失败返回空列表。
+        """
+        api_base = "https://api.github.com/repos/NapNeko/NapCatQQ"
+        ssl_ctx = make_ssl_context(strict=True)
+        try:
+            connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+            async with aiohttp.ClientSession(connector=connector) as session:
+                async with session.get(
+                    f"{api_base}/releases?per_page=30",
+                    timeout=aiohttp.ClientTimeout(total=20, sock_connect=8),
+                    headers={"Accept": "application/vnd.github+json",
+                             "User-Agent": "napcat-go-plugin"},
+                ) as resp:
+                    if resp.status != 200:
+                        self.log_lines.append(f"[releases] GitHub API HTTP {resp.status}")
+                        return []
+                    data = await resp.json()
+        except Exception as e:
+            self.log_lines.append(f"[releases] 拉取版本列表失败: {e}")
+            return []
+
+        out: List[Dict[str, Any]] = []
+        for rel in data:
+            if not isinstance(rel, dict):
+                continue
+            tag = (rel.get("tag_name") or "").strip()
+            if not tag:
+                continue
+            out.append({
+                "tag": tag,
+                "name": (rel.get("name") or tag).strip(),
+                "published_at": rel.get("published_at") or "",
+                "prerelease": bool(rel.get("prerelease")),
+            })
+        return out
+
     # ---------- NapCat 下载 / 解压（Windows + Linux 共用） ----------
 
     # 与 Ubuntu 实测方案完全一致的 launcher.sh（LD_PRELOAD + Xvfb :1）
@@ -345,7 +384,7 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
             logger.error(f"Extract failed: {e}")
             return False
 
-    async def download_napcat(self) -> bool:
+    async def download_napcat(self, version: Optional[str] = None) -> bool:
         if getattr(self, "_downloading", False):
             return False
         self._downloading = True
@@ -366,7 +405,10 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
             return False
 
         try:
-            version = self.plugin.config.get("napcat_version", DEFAULT_NAPCAT_VERSION)
+            if version and str(version).strip():
+                version = str(version).strip()
+            else:
+                version = self.plugin.config.get("napcat_version", DEFAULT_NAPCAT_VERSION)
             if "/" in version:
                 fixed = version.split("/", 1)[0].strip()
                 if fixed:
@@ -533,6 +575,7 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
     # ---------- LinuxQQ ----------
 
     def _build_linuxqq_candidate_urls(self) -> List[Tuple[str, str]]:
+        """QQ deb 候选源：先套用户配置+内置加速镜像，最后回退 GitHub 直链。"""
         candidates: List[Tuple[str, str]] = []
         seen = set()
 
@@ -553,7 +596,7 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
             if "github.com/" in raw or "githubusercontent.com/" in raw:
                 for m in mirror_order:
                     add(f"{m.rstrip('/')}/{raw}", m)
-                add(raw, "github-original")
+                add(raw, "nc-go-releases")
             else:
                 add(raw, "qq-cdn")
         return candidates
@@ -912,7 +955,7 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
                 self.log_lines.append(f"[install]   sudo rm -rf {inner}")
                 return False
 
-    async def install_linux_napcat(self) -> bool:
+    async def install_linux_napcat(self, version: Optional[str] = None) -> bool:
         """Linux native 一键安装（与 Ubuntu 实测方案一致）：
         装 QQ -> 装依赖(xvfb/g++) -> 下载 NapCat.Shell.zip(SHA256) -> 解压
         -> 下载 launcher.cpp 编译 libnapcat_launcher.so -> 生成 launcher.sh。
@@ -925,9 +968,9 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
         self.download_state["message"] = "正在准备 Linux 安装"
         self.download_state["current_mirror"] = "准备中"
 
-        # 1) 装/校验系统 LinuxQQ（dpkg -i，需要 sudo）
+        # 1) 装/校验系统 LinuxQQ（dpkg -i，需要 sudo；不兼容则自动 purge 后装推荐版）
         try:
-            ok_qq = await self.ensure_linux_qq()
+            ok_qq = await self.ensure_linux_qq_compatible()
         except Exception as e:
             self.log_lines.append(f"[install] ✘ LinuxQQ 安装异常: {e}")
             self.download_state["phase"] = "failed"
@@ -993,7 +1036,7 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
         # 3) 下载 + SHA256 校验 + 解压 NapCat.Shell.zip
         self.log_lines.append("[install] 开始下载 NapCat.Shell.zip（自动解析最新版，含 SHA256 校验）...")
         try:
-            ok_zip = await self.download_napcat()
+            ok_zip = await self.download_napcat(version=version)
         except Exception as e:
             self.log_lines.append(f"[install] ✘ NapCat 下载异常: {e}")
             self.download_state["phase"] = "failed"

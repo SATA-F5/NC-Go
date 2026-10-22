@@ -82,7 +82,6 @@ RECOMMENDED_LINUXQQ_VERSION = "3.2.34"
 
 LINUXQQ_DEB_URLS = [
     "https://github.com/SATA-F5/NC_Go/releases/download/data-v0.0.0/QQ_3.2.34_Linux_amd64.deb",
-    "https://github.com/Rodert/qq-versions/releases/download/qq-packages-20260429/QQ_3.2.28_260429_amd64_01.deb",
 ]
 
 IS_WINDOWS = platform.system() == "Windows"

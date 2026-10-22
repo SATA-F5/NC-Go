@@ -74,6 +74,8 @@ class NapCatGoPlugin(Star):
         _reg(f"/{PLUGIN_NAME}/stop", self.api_stop, ["POST"], "Stop NapCat")
         _reg(f"/{PLUGIN_NAME}/restart", self.api_restart, ["POST"], "Restart NapCat")
         _reg(f"/{PLUGIN_NAME}/install", self.api_install, ["POST"], "Install (Linux)")
+        _reg(f"/{PLUGIN_NAME}/uninstall", self.api_uninstall, ["POST"], "Uninstall NapCat")
+        _reg(f"/{PLUGIN_NAME}/releases", self.api_releases, ["GET"], "List NapCat releases")
         _reg(f"/{PLUGIN_NAME}/logs", self.api_get_logs, ["GET"], "Get logs")
         _reg(f"/{PLUGIN_NAME}/open-webui", self.api_open_webui, ["POST"], "Open WebUI")
         _reg(f"/{PLUGIN_NAME}/cleanup", self.api_cleanup, ["POST"], "Cleanup")
@@ -249,6 +251,14 @@ class NapCatGoPlugin(Star):
         return json_response({"ok": True})
 
     async def api_install(self):
+        try:
+            payload = await request.json(default={})
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        version = str(payload.get("version", "") or "").strip() or None
+
         if self.manager.deploy_mode == "docker":
             try:
                 ok = await self.manager._start_docker()
@@ -257,15 +267,36 @@ class NapCatGoPlugin(Star):
                 return error_response(f"Docker install failed: {e}")
         if IS_WINDOWS:
             try:
-                ok = await self.manager.download_napcat()
+                ok = await self.manager.download_napcat(version=version)
                 return json_response({"ok": ok})
             except Exception as e:
                 return error_response(f"Download failed: {e}")
         try:
-            ok = await self.manager.install_linux_napcat()
+            ok = await self.manager.install_linux_napcat(version=version)
             return json_response({"ok": ok})
         except Exception as e:
             return error_response(f"Install failed: {e}")
+
+    async def api_releases(self):
+        try:
+            releases = await self.manager.list_napcat_releases()
+            return json_response({"ok": True, "releases": releases})
+        except Exception as e:
+            return error_response(f"List releases failed: {e}")
+
+    async def api_uninstall(self):
+        try:
+            payload = await request.json(default={})
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        purge_qq = bool(payload.get("purge_qq", False))
+        try:
+            ok = await self.manager.uninstall_napcat(purge_qq=purge_qq)
+            return json_response({"ok": ok})
+        except Exception as e:
+            return error_response(f"Uninstall failed: {e}")
 
     async def api_get_logs(self):
         since = request.query.get("since", 0, type=int)

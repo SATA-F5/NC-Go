@@ -31,6 +31,9 @@ const els = {
     dlPercent: $('dl-percent'),
     dlSize: $('dl-size'),
     dlSpeed: $('dl-speed'),
+    verSelect: $('ver-select'),
+    btnInstall: $('btn-install'),
+    btnUninstall: $('btn-uninstall'),
 };
 
 let bridge = null;
@@ -226,6 +229,7 @@ async function initBridge() {
     }
     await refreshStatus();
     await refreshLogs();
+    await loadReleases();
     statusTimer = setInterval(refreshStatus, STATUS_INTERVAL);
     logTimer = setInterval(refreshLogs, LOG_INTERVAL);
     console.log('[napcat] 轮询已启动');
@@ -242,6 +246,78 @@ async function refreshStatus() {
         console.error('[napcat] 拉取状态失败:', e);
     } finally {
         statusFetching = false;
+    }
+}
+
+async function loadReleases() {
+    if (!bridge || !els.verSelect) return;
+    try {
+        const r = await bridge.apiGet('releases');
+        const releases = (r && r.releases) || [];
+        const cur = els.verSelect.value;
+        els.verSelect.innerHTML = '';
+        const latestOpt = document.createElement('option');
+        latestOpt.value = 'latest';
+        latestOpt.textContent = 'latest（自动取最新版）';
+        els.verSelect.appendChild(latestOpt);
+        releases.forEach((rel) => {
+            const opt = document.createElement('option');
+            opt.value = rel.tag;
+            const pre = rel.prerelease ? ' [预发布]' : '';
+            const date = rel.published_at ? rel.published_at.slice(0, 10) : '';
+            opt.textContent = rel.tag + pre + (date ? `  (${date})` : '');
+            els.verSelect.appendChild(opt);
+        });
+        if ([...els.verSelect.options].some(o => o.value === cur)) {
+            els.verSelect.value = cur;
+        }
+    } catch (e) {
+        console.error('[napcat] 拉取 releases 失败:', e);
+    }
+}
+
+async function doInstall() {
+    if (!bridge) return;
+    const version = els.verSelect ? els.verSelect.value : 'latest';
+    if (els.btnInstall) {
+        els.btnInstall.disabled = true;
+        els.btnInstall.textContent = '安装中...';
+    }
+    startFastDownloadPolling();
+    try {
+        const r = await bridge.apiPost('install', { version: version });
+        if (r && r.ok) {
+            toast('安装指令已发送，请看右侧日志', 2500, 'ok');
+        } else {
+            toast(`安装失败: ${(r && r.message) || ''}`, 4000, 'err');
+        }
+        await refreshStatus();
+    } catch (e) {
+        toast(`安装失败: ${e.message || e}`, 4000, 'err');
+    } finally {
+        if (els.btnInstall) {
+            els.btnInstall.disabled = false;
+            els.btnInstall.textContent = '安装所选版本';
+        }
+    }
+}
+
+async function doUninstall() {
+    if (!bridge) return;
+    if (!confirm('将停止 NapCat 并删除已安装的文件。继续？')) return;
+    if (els.btnUninstall) els.btnUninstall.disabled = true;
+    try {
+        const r = await bridge.apiPost('uninstall', {});
+        if (r && r.ok) {
+            toast('已卸载 NapCat', 2500, 'ok');
+        } else {
+            toast(`卸载失败: ${(r && r.message) || ''}`, 4000, 'err');
+        }
+        await refreshStatus();
+    } catch (e) {
+        toast(`卸载失败: ${e.message || e}`, 4000, 'err');
+    } finally {
+        if (els.btnUninstall) els.btnUninstall.disabled = false;
     }
 }
 
@@ -384,6 +460,13 @@ function updateStatus(d) {
             els.webuiSummary.style.cursor = 'not-allowed';
             if (els.webuiDetails) els.webuiDetails.open = false;
         }
+    }
+
+    if (els.btnUninstall) {
+        els.btnUninstall.style.display = d.napcat_installed ? '' : 'none';
+    }
+    if (els.btnInstall) {
+        els.btnInstall.disabled = isDownloading;
     }
 
     if (d.astrbot_bot_found) {
@@ -763,6 +846,8 @@ function bindEvents() {
 
         bind('btn-toggle-power', togglePower);
         bind('btn-sync', doSync);
+        bind('btn-install', doInstall);
+        bind('btn-uninstall', doUninstall);
         bind('btn-open-webui-newpage', openWebUINewPage);
         bind('btn-open-webui-browser', openWebUIBrowser);
         bind('btn-restart', () => postAction('restart', '重启指令已发送'));
