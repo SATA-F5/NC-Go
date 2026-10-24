@@ -31,9 +31,12 @@ const els = {
     dlPercent: $('dl-percent'),
     dlSize: $('dl-size'),
     dlSpeed: $('dl-speed'),
-    verSelect: $('ver-select'),
     btnInstall: $('btn-install'),
-    btnUninstall: $('btn-uninstall'),
+    verDropdown: $('ver-dropdown'),
+    verDropdownBtn: $('ver-dropdown-btn'),
+    verSelectedLabel: $('ver-selected-label'),
+    verDropdownOptions: $('ver-dropdown-options'),
+    verSearch: $('ver-search'),
 };
 
 let bridge = null;
@@ -67,6 +70,31 @@ function toast(message, duration = 2500, kind = '') {
     els.toast.className = 'toast' + (kind ? ' ' + kind : '');
     els.toast.classList.add('visible');
     setTimeout(() => els.toast.classList.remove('visible'), duration);
+}
+
+function customConfirm(message) {
+    return new Promise((resolve) => {
+        const mask = $('confirm-mask');
+        const msg = $('confirm-msg');
+        const ok = $('confirm-ok');
+        const cancel = $('confirm-cancel');
+        if (!mask || !msg) { resolve(true); return; }
+        msg.textContent = message;
+        mask.classList.add('visible');
+        const done = (val) => {
+            mask.classList.remove('visible');
+            ok.removeEventListener('click', onOk);
+            cancel.removeEventListener('click', onCancel);
+            mask.removeEventListener('click', onMask);
+            resolve(val);
+        };
+        const onOk = () => done(true);
+        const onCancel = () => done(false);
+        const onMask = (e) => { if (e.target === mask) done(false); };
+        ok.addEventListener('click', onOk);
+        cancel.addEventListener('click', onCancel);
+        mask.addEventListener('click', onMask);
+    });
 }
 
 function rewriteUrlForCurrentHost(url) {
@@ -249,36 +277,75 @@ async function refreshStatus() {
     }
 }
 
+let selectedVersion = 'latest';
+let allReleases = [];
+
+function renderVerOptions(filter) {
+    if (!els.verDropdownOptions) return;
+    const f = (filter || '').toLowerCase().trim();
+    els.verDropdownOptions.innerHTML = '';
+
+    const makeItem = (value, label, date, pre) => {
+        const div = document.createElement('div');
+        div.className = 'ver-item' + (value === selectedVersion ? ' selected' : '');
+        div.dataset.value = value;
+        const left = document.createElement('span');
+        left.textContent = label;
+        if (pre) {
+            const preSpan = document.createElement('span');
+            preSpan.className = 'ver-pre';
+            preSpan.textContent = '[预发布]';
+            left.appendChild(preSpan);
+        }
+        const right = document.createElement('span');
+        right.className = 'ver-date';
+        right.textContent = date || '';
+        div.appendChild(left);
+        div.appendChild(right);
+        div.addEventListener('click', () => {
+            selectedVersion = value;
+            if (els.verSelectedLabel) {
+                els.verSelectedLabel.textContent = label;
+            }
+            if (els.verDropdown) els.verDropdown.classList.remove('open');
+            renderVerOptions(els.verSearch ? els.verSearch.value : '');
+        });
+        return div;
+    };
+
+    const latestItem = makeItem('latest', 'latest（自动取最新版）', '', false);
+    if (!f || 'latest'.includes(f) || '自动'.includes(f)) {
+        els.verDropdownOptions.appendChild(latestItem);
+    }
+
+    allReleases.forEach((rel) => {
+        const label = rel.tag;
+        const date = rel.published_at ? rel.published_at.slice(0, 10) : '';
+        if (f && !label.toLowerCase().includes(f) && !date.includes(f)) return;
+        els.verDropdownOptions.appendChild(makeItem(rel.tag, label, date, rel.prerelease));
+    });
+}
+
 async function loadReleases() {
-    if (!bridge || !els.verSelect) return;
+    if (!bridge) return;
     try {
         const r = await bridge.apiGet('releases');
-        const releases = (r && r.releases) || [];
-        const cur = els.verSelect.value;
-        els.verSelect.innerHTML = '';
-        const latestOpt = document.createElement('option');
-        latestOpt.value = 'latest';
-        latestOpt.textContent = 'latest（自动取最新版）';
-        els.verSelect.appendChild(latestOpt);
-        releases.forEach((rel) => {
-            const opt = document.createElement('option');
-            opt.value = rel.tag;
-            const pre = rel.prerelease ? ' [预发布]' : '';
-            const date = rel.published_at ? rel.published_at.slice(0, 10) : '';
-            opt.textContent = rel.tag + pre + (date ? `  (${date})` : '');
-            els.verSelect.appendChild(opt);
-        });
-        if ([...els.verSelect.options].some(o => o.value === cur)) {
-            els.verSelect.value = cur;
-        }
+        allReleases = (r && r.releases) || [];
+        renderVerOptions(els.verSearch ? els.verSearch.value : '');
     } catch (e) {
         console.error('[napcat] 拉取 releases 失败:', e);
+        renderVerOptions('');
     }
 }
 
 async function doInstall() {
     if (!bridge) return;
-    const version = els.verSelect ? els.verSelect.value : 'latest';
+    if (lastStatus && lastStatus.running) {
+        toast('NapCat 正在运行，请先停止后再安装新版本', 4000, 'err');
+        return;
+    }
+    const version = selectedVersion;
+    if (!await customConfirm(`将安装 NapCat 版本「${version}」，旧版本文件会被清理（保留 config 配置）。继续？`)) return;
     if (els.btnInstall) {
         els.btnInstall.disabled = true;
         els.btnInstall.textContent = '安装中...';
@@ -299,25 +366,6 @@ async function doInstall() {
             els.btnInstall.disabled = false;
             els.btnInstall.textContent = '安装所选版本';
         }
-    }
-}
-
-async function doUninstall() {
-    if (!bridge) return;
-    if (!confirm('将停止 NapCat 并删除已安装的文件。继续？')) return;
-    if (els.btnUninstall) els.btnUninstall.disabled = true;
-    try {
-        const r = await bridge.apiPost('uninstall', {});
-        if (r && r.ok) {
-            toast('已卸载 NapCat', 2500, 'ok');
-        } else {
-            toast(`卸载失败: ${(r && r.message) || ''}`, 4000, 'err');
-        }
-        await refreshStatus();
-    } catch (e) {
-        toast(`卸载失败: ${e.message || e}`, 4000, 'err');
-    } finally {
-        if (els.btnUninstall) els.btnUninstall.disabled = false;
     }
 }
 
@@ -462,9 +510,6 @@ function updateStatus(d) {
         }
     }
 
-    if (els.btnUninstall) {
-        els.btnUninstall.style.display = d.napcat_installed ? '' : 'none';
-    }
     if (els.btnInstall) {
         els.btnInstall.disabled = isDownloading;
     }
@@ -683,6 +728,9 @@ async function togglePower() {
     try {
         const d = await bridge.apiGet('status');
         const ep = d.running ? 'stop' : 'start';
+        if (ep === 'stop') {
+            if (!await customConfirm('确定要停止 NapCat 吗？')) return;
+        }
         if (ep === 'start') {
             startFastDownloadPolling();
         }
@@ -693,6 +741,7 @@ async function togglePower() {
 }
 
 async function doSync() {
+    if (!await customConfirm('将把当前配置写入 NapCat，继续？')) return;
     const r = await postAction('sync');
     if (r) {
         if (r.ok) toast('同步成功', 2000, 'ok');
@@ -769,6 +818,7 @@ function closeConfig() {
 
 async function saveConfig() {
     if (!bridge) return;
+    if (!await customConfirm('保存配置并同步到 NapCat？')) return;
     const napcatDir = $('cfg-napcat-dir').value.trim();
     const astrbotPath = $('cfg-astrbot-path').value.trim();
     const qqNumber = $('cfg-qq-number').value.trim();
@@ -847,15 +897,37 @@ function bindEvents() {
         bind('btn-toggle-power', togglePower);
         bind('btn-sync', doSync);
         bind('btn-install', doInstall);
-        bind('btn-uninstall', doUninstall);
+
+        // 版本下拉
+        if (els.verDropdownBtn) {
+            els.verDropdownBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (els.verDropdown) els.verDropdown.classList.toggle('open');
+            });
+        }
+        if (els.verSearch) {
+            els.verSearch.addEventListener('input', () => {
+                renderVerOptions(els.verSearch.value);
+            });
+            els.verSearch.addEventListener('click', (e) => e.stopPropagation());
+        }
+        document.addEventListener('click', (e) => {
+            if (els.verDropdown && !els.verDropdown.contains(e.target)) {
+                els.verDropdown.classList.remove('open');
+            }
+        });
         bind('btn-open-webui-newpage', openWebUINewPage);
         bind('btn-open-webui-browser', openWebUIBrowser);
-        bind('btn-restart', () => postAction('restart', '重启指令已发送'));
+        bind('btn-restart', async () => {
+            if (!await customConfirm('确定要重启 NapCat 吗？')) return;
+            await postAction('restart', '重启指令已发送');
+        });
         bind('btn-cleanup', async () => {
-            if (!confirm('将强制终止所有 NapCat 相关进程。继续？')) return;
+            if (!await customConfirm('将强制终止所有 NapCat 相关进程。继续？')) return;
             await postAction('cleanup', '已清理残留进程');
         });
         bind('btn-refresh', async () => {
+            if (!await customConfirm('将重新探测 NapCat 安装路径和配置，继续？')) return;
             const r = await postAction('refresh');
             if (r) toast('已重新探测', 1500, 'ok');
         });

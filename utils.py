@@ -20,9 +20,6 @@ PLUGIN_NAME = "pulid_napcat_go_to_astrbot"
 CONFIG_VERSION = 4
 
 NAPCAT_RELEASE_BASE = "https://github.com/NapNeko/NapCatQQ/releases/download"
-NAPCAT_LINUX_LAUNCHER_CPP = "https://raw.githubusercontent.com/NapNeko/napcat-linux-launcher/refs/heads/main/launcher.cpp"
-NAPCAT_INSTALL_SH_ORIGINAL = "https://raw.githubusercontent.com/NapNeko/napcat-linux-installer/refs/heads/main/install.sh"
-NAPCAT_INSTALL_SH_LEGACY = "https://raw.githubusercontent.com/NapNeko/napcat-linux-installer/main/install.sh"
 DEFAULT_NAPCAT_VERSION = "latest"
 DEFAULT_DOWNLOAD_MIRROR = "https://gh.zwy.one/"
 
@@ -504,3 +501,13 @@ def kill_pid_tree(pid: int):
 def kill_pids(pids: Set[int]):
     for pid in pids:
         kill_pid_tree(pid)
+
+
+# Linux 运行 QQ + NapCat 所需的全套系统依赖（DS 整合版）
+LINUX_RUNTIME_DEPS = [
+    "libatspi2.0-0", "libgtk-3-0", "libgbm1", "libasound2t64",
+    "libnss3", "libnotify4", "libsecret-1-0", "libxss1",
+    "libxtst6", "libxkbfile1", "xvfb", "x11vnc", "openbox",
+    "dbus-user-session", "fonts-wqy-zenhei",
+    "libgl1-mesa-dri", "xauth",
+]

@@ -167,31 +167,35 @@
         .big-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
         .big-btn.power-on {
-            background: linear-gradient(135deg, rgba(61,220,151,0.85), rgba(0,180,120,0.85));
+            background: linear-gradient(135deg, #3ddc97, #00b478);
             border: none;
             color: #fff;
             box-shadow: 0 4px 16px rgba(61, 220, 151, 0.35);
+            backdrop-filter: none;
         }
         .big-btn.power-on:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 6px 22px rgba(61,220,151,0.45); }
         .big-btn.power-off {
-            background: linear-gradient(135deg, rgba(255,65,108,0.85), rgba(255,75,43,0.85));
+            background: linear-gradient(135deg, #ff416c, #ff4b2b);
             border: none;
             color: #fff;
             box-shadow: 0 4px 16px rgba(255, 75, 43, 0.32);
+            backdrop-filter: none;
         }
         .big-btn.power-off:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 6px 22px rgba(255,75,43,0.42); }
         .big-btn.sync {
-            background: linear-gradient(135deg, rgba(0,198,255,0.85), rgba(0,114,255,0.85));
+            background: linear-gradient(135deg, #00c6ff, #0072ff);
             border: none;
             color: #fff;
             box-shadow: 0 4px 16px rgba(0, 114, 255, 0.35);
+            backdrop-filter: none;
         }
         .big-btn.sync:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 6px 22px rgba(0,174,236,0.45); }
         .big-btn.power-downloading {
-            background: linear-gradient(135deg, rgba(255,207,92,0.9), rgba(255,160,40,0.9));
+            background: linear-gradient(135deg, #ffcf5c, #ffa028);
             border: none;
             color: #2a1a00;
             box-shadow: 0 4px 16px rgba(255, 180, 60, 0.35);
+            backdrop-filter: none;
         }
         .big-btn.power-downloading:hover:not(:disabled) { filter: brightness(1.06); }
 
@@ -493,6 +497,8 @@
             color: var(--text-muted);
             white-space: pre-wrap;
             word-break: break-all;
+            user-select: text;
+            -webkit-user-select: text;
         }
         .log-container::-webkit-scrollbar { width: 6px; }
         .log-container::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 3px; }
@@ -627,6 +633,104 @@
         .toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
         .toast.ok { background: linear-gradient(135deg, #3ddc97, #00b478); box-shadow: 0 6px 20px rgba(61,220,151,0.4); }
         .toast.err { background: linear-gradient(135deg, #ff416c, #ff4b2b); box-shadow: 0 6px 20px rgba(255,75,43,0.4); }
+
+        /* 自定义确认弹窗 */
+        .confirm-mask {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(5, 8, 18, 0.6);
+            backdrop-filter: blur(4px);
+            z-index: 3000;
+            justify-content: center;
+            align-items: center;
+            padding: 16px;
+        }
+        .confirm-mask.visible { display: flex; }
+        .confirm-box {
+            background: rgba(30, 30, 46, 0.95);
+            border: 1px solid var(--glass-border);
+            border-radius: 14px;
+            padding: 20px;
+            width: 380px;
+            max-width: 100%;
+            box-shadow: 0 18px 50px rgba(0,0,0,0.6);
+        }
+        .confirm-msg {
+            font-size: 13px;
+            color: var(--text);
+            line-height: 1.6;
+            margin-bottom: 18px;
+        }
+        .confirm-btns {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        .confirm-btns .btn {
+            padding: 8px 18px;
+            font-size: 12px;
+            border-radius: 10px;
+        }
+
+        /* 自定义版本下拉 */
+        .ver-dropdown { position: relative; }
+        .ver-dropdown-btn {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--glass-border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 12px;
+            font-family: 'Consolas', monospace;
+            cursor: pointer;
+        }
+        .ver-dropdown-btn:hover { border-color: var(--primary-light); }
+        .ver-dropdown-arrow { color: var(--text-muted); font-size: 10px; }
+        .ver-dropdown-list {
+            display: none;
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            background: rgba(20,20,35,0.98);
+            border: 1px solid var(--glass-border);
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            z-index: 100;
+            overflow: hidden;
+        }
+        .ver-dropdown.open .ver-dropdown-list { display: block; }
+        .ver-dropdown-search { padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+        .ver-dropdown-search input {
+            width: 100%;
+            padding: 6px 10px;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--glass-border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 12px;
+            outline: none;
+            box-sizing: border-box;
+        }
+        .ver-dropdown-options { max-height: 220px; overflow-y: auto; }
+        .ver-item {
+            padding: 8px 14px;
+            font-size: 12px;
+            font-family: 'Consolas', monospace;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .ver-item:hover { background: rgba(0,174,236,0.15); }
+        .ver-item.selected { background: rgba(0,174,236,0.25); color: var(--primary-light); }
+        .ver-item .ver-date { color: var(--text-muted); font-size: 10px; }
+        .ver-item .ver-pre { color: #ffd98a; font-size: 10px; margin-left: 6px; }
 
         /* ===================== 开屏引导 ===================== */
         #onboarding {
@@ -904,20 +1008,6 @@
                     </div>
                 </div>
 
-                <div class="install-panel" id="install-panel">
-                    <div class="install-row">
-                        <select class="ver-select" id="ver-select">
-                            <option value="latest">latest（自动取最新版）</option>
-                        </select>
-                        <button class="btn btn-primary" id="btn-install">安装所选版本</button>
-                        <button class="btn btn-danger" id="btn-uninstall">卸载当前版本</button>
-                    </div>
-                    <div class="install-hint" id="install-hint">
-                        从 GitHub Releases 拉取版本列表，选择后点「安装所选版本」下载并部署。
-                        「卸载当前版本」会停止并删除已安装的 NapCat 文件（不影响 QQ 系统包）。
-                    </div>
-                </div>
-
                 <div class="status-section-title">运行状态</div>
                 <div class="status-grid" id="status-grid">
                     <div class="status-item win-only">
@@ -1077,6 +1167,29 @@
                 </div>
             </div>
 
+            <div class="form-section">
+                <div class="form-section-title">版本管理</div>
+                <div class="form-group">
+                    <label>NapCat 版本</label>
+                    <div class="ver-dropdown" id="ver-dropdown">
+                        <button type="button" class="ver-dropdown-btn" id="ver-dropdown-btn">
+                            <span id="ver-selected-label">latest（自动取最新版）</span>
+                            <span class="ver-dropdown-arrow">&#9662;</span>
+                        </button>
+                        <div class="ver-dropdown-list" id="ver-dropdown-list">
+                            <div class="ver-dropdown-search">
+                                <input type="text" id="ver-search" placeholder="搜索版本...">
+                            </div>
+                            <div class="ver-dropdown-options" id="ver-dropdown-options"></div>
+                        </div>
+                    </div>
+                    <div class="form-hint">
+                        从 GitHub Releases 拉取版本列表。点「安装」会自动清理旧版本文件（保留 config 配置目录）。
+                    </div>
+                    <button class="btn btn-primary" id="btn-install" style="margin-top:8px;">安装所选版本</button>
+                </div>
+            </div>
+
             <div class="form-actions">
                 <button class="btn" id="btn-config-cancel">取消</button>
                 <button class="btn btn-primary" id="btn-config-save">保存并同步</button>
@@ -1094,6 +1207,16 @@
     </div>
 
     <div class="toast" id="toast"></div>
+
+    <div class="confirm-mask" id="confirm-mask">
+        <div class="confirm-box">
+            <div class="confirm-msg" id="confirm-msg"></div>
+            <div class="confirm-btns">
+                <button class="btn" id="confirm-cancel">取消</button>
+                <button class="btn btn-primary" id="confirm-ok">确定</button>
+            </div>
+        </div>
+    </div>
 
     <script type="module" src="./bridge.js"></script>
     <script>

@@ -28,6 +28,7 @@ from .utils import (
     get_linux_qq_version, get_linux_qq_build_code,
     is_linux_qq_version_compatible, is_qq_installed,
     NAPCAT_SUPPORTED_QQ_MIN, NAPCAT_SUPPORTED_QQ_MAX,
+    LINUX_RUNTIME_DEPS,
 )
 from .download import DownloadMixin
 
@@ -59,7 +60,6 @@ class NapCatManager(DownloadMixin):
         self._auto_link_done = False
         self._pre_existing_qq_pids: Set[int] = set()
         self._launched_pids: Set[int] = set()
-        self._launch_fake_bin: Optional[Path] = None
 
         # NapCatAPI 由外部注入（napcat 插件目录下的 pulid_api.py）
         try:
@@ -91,7 +91,7 @@ class NapCatManager(DownloadMixin):
 
     def _is_new_style_install(self, d: Path) -> bool:
         try:
-            return (d / "libnapcat_launcher.so").exists() and (d / "launcher.sh").exists()
+            return (d / "launcher.sh").exists() and (d / "napcat.mjs").exists()
         except Exception:
             return False
 
@@ -250,6 +250,205 @@ class NapCatManager(DownloadMixin):
             except Exception:
                 continue
         return None, None
+
+    QQ_LOADER_NAME = "loadNapCat.js"
+    QQ_DEFAULT_MAIN = "./application.asar/app_launcher/index.js"
+
+    def _qq_app_dir(self) -> Optional[Path]:
+        qq_real, _ = self._find_qq_binary(self.napcat_dir)
+        if not qq_real:
+            return None
+        app = Path(qq_real).parent / "resources" / "app"
+        try:
+            if (app / "package.json").is_file():
+                return app
+        except OSError:
+            pass
+        return None
+
+    @staticmethod
+    def _loader_js(napcat_mjs: Path) -> str:
+        # 与官方 install.sh 的 loadNapCat.js 相同，只是用绝对路径，避免依赖 cwd
+        return (
+            "// napcat-go loader\n"
+            "const { pathToFileURL } = require('node:url');\n"
+            f"import(pathToFileURL({json.dumps(str(napcat_mjs))}).href);\n"
+        )
+
+    async def _run_sudo(self, pw: str, *args: str, timeout: int = 30) -> Tuple[int, str]:
+        if IS_WINDOWS or not shutil.which("sudo"):
+            return -1, "sudo 不可用"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "sudo", "-S", *args,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+        except Exception as e:
+            return -1, str(e)
+        try:
+            out, _ = await asyncio.wait_for(
+                proc.communicate(input=(pw + "\n").encode()), timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return -1, "sudo 命令超时"
+        return proc.returncode or 0, (out or b"").decode("utf-8", "ignore")
+
+    async def _ensure_qq_loader(self, pw: str, napcat_mjs: Path) -> bool:
+        """把 QQ 启动入口指向 NapCat（官方 loadNapCat.js 方案）。
+
+        写 <QQ>/resources/app/loadNapCat.js，并把 package.json 的 main 改为
+        ./loadNapCat.js。不改 NapCat 目录结构，不需要 .so、软链接或 cwd 假设。
+        """
+        if IS_WINDOWS:
+            return False
+        app = self._qq_app_dir()
+        if not app:
+            self.log_lines.append("[inject] ✘ 未找到 QQ 的 resources/app/package.json")
+            return False
+        napcat_mjs = Path(napcat_mjs)
+        if not napcat_mjs.is_file():
+            self.log_lines.append(f"[inject] ✘ 未找到 NapCat 入口: {napcat_mjs}")
+            return False
+        if not pw:
+            self.log_lines.append("[inject] ✘ 未配置 sudo 密码，无法写入 QQ 安装目录")
+            return False
+
+        loader = app / self.QQ_LOADER_NAME
+        pkg = app / "package.json"
+        js = self._loader_js(napcat_mjs)
+        want_main = f"./{self.QQ_LOADER_NAME}"
+        bak_js = self.persistent_dir / ".qq_loadNapCat.js.bak"
+        bak_main = self.persistent_dir / ".qq_main.bak"
+
+        def _current_main() -> str:
+            try:
+                with open(pkg, "r", encoding="utf-8-sig") as f:
+                    return str(json.load(f).get("main") or "")
+            except Exception:
+                return ""
+
+        try:
+            if loader.is_file() and not bak_js.exists():
+                orig_js = loader.read_text(encoding="utf-8", errors="ignore")
+                if orig_js and orig_js != js and "napcat-go loader" not in orig_js:
+                    bak_js.write_text(orig_js, encoding="utf-8")
+                    self.log_lines.append("[inject] 已备份原有 loadNapCat.js")
+            cur_main = _current_main()
+            if cur_main and cur_main != want_main and not bak_main.exists():
+                bak_main.write_text(cur_main, encoding="utf-8")
+        except Exception:
+            pass
+
+        try:
+            old_js = loader.read_text(encoding="utf-8", errors="ignore") if loader.is_file() else ""
+            if old_js == js and _current_main() == want_main:
+                self.log_lines.append("[inject] ✔ QQ 注入入口已就位")
+                return True
+        except OSError:
+            pass
+
+        tmp = self.persistent_dir / f".loadNapCat.{os.getpid()}.js"
+        try:
+            tmp.write_text(js, encoding="utf-8")
+            code, out = await self._run_sudo(pw, "install", "-m", "644", str(tmp), str(loader))
+            if code != 0:
+                self.log_lines.append(f"[inject] ✘ 写入 loadNapCat.js 失败: {out[-300:]}")
+                return False
+
+            patch = (
+                "import json\n"
+                f"p = {json.dumps(str(pkg))}\n"
+                "with open(p, 'r', encoding='utf-8-sig') as f:\n"
+                "    d = json.load(f)\n"
+                f"d['main'] = {json.dumps(want_main)}\n"
+                "with open(p, 'w', encoding='utf-8') as f:\n"
+                "    json.dump(d, f, ensure_ascii=False, indent=2)\n"
+            )
+            code, out = await self._run_sudo(pw, "python3", "-c", patch)
+            if code != 0:
+                self.log_lines.append(f"[inject] ✘ 修改 QQ package.json 失败: {out[-300:]}")
+                return False
+        except Exception as e:
+            self.log_lines.append(f"[inject] ✘ 写入注入入口异常: {e}")
+            return False
+        finally:
+            try:
+                tmp.unlink()
+            except Exception:
+                pass
+
+        ok = _current_main() == want_main and loader.is_file()
+        if ok:
+            self.log_lines.append(f"[inject] ✔ 已注入 NapCat: {napcat_mjs}")
+        else:
+            self.log_lines.append("[inject] ✘ 注入后校验失败")
+        return ok
+
+    async def _remove_qq_loader(self, pw: str) -> None:
+        """还原 QQ 的 package.json 并删除 loadNapCat.js（卸载时调用）。"""
+        if IS_WINDOWS:
+            return
+        app = self._qq_app_dir()
+        if not app:
+            return
+        pkg = app / "package.json"
+        loader = app / self.QQ_LOADER_NAME
+        bak_js = self.persistent_dir / ".qq_loadNapCat.js.bak"
+        bak_main = self.persistent_dir / ".qq_main.bak"
+        try:
+            with open(pkg, "r", encoding="utf-8-sig") as f:
+                cur = str(json.load(f).get("main") or "")
+        except Exception:
+            return
+        if cur != f"./{self.QQ_LOADER_NAME}" and not bak_js.exists():
+            return
+        if not pw:
+            self.log_lines.append("[uninstall] ⚠ 无 sudo 密码，未还原 QQ 的 package.json")
+            return
+
+        restore_main = self.QQ_DEFAULT_MAIN
+        try:
+            if bak_main.exists():
+                v = bak_main.read_text(encoding="utf-8").strip()
+                if v:
+                    restore_main = v
+        except Exception:
+            pass
+
+        patch = (
+            "import json\n"
+            f"p = {json.dumps(str(pkg))}\n"
+            "with open(p, 'r', encoding='utf-8-sig') as f:\n"
+            "    d = json.load(f)\n"
+            f"d['main'] = {json.dumps(restore_main)}\n"
+            "with open(p, 'w', encoding='utf-8') as f:\n"
+            "    json.dump(d, f, ensure_ascii=False, indent=2)\n"
+        )
+        code, out = await self._run_sudo(pw, "python3", "-c", patch)
+        if code != 0:
+            self.log_lines.append(f"[uninstall] ⚠ 还原 QQ package.json 失败: {out[-200:]}")
+            return
+
+        if bak_js.exists():
+            code, out = await self._run_sudo(pw, "install", "-m", "644", str(bak_js), str(loader))
+        else:
+            code, out = await self._run_sudo(pw, "rm", "-f", str(loader))
+        if code != 0:
+            self.log_lines.append(f"[uninstall] ⚠ 还原 loadNapCat.js 失败: {out[-200:]}")
+            return
+
+        for p in (bak_js, bak_main):
+            try:
+                p.unlink()
+            except Exception:
+                pass
+        self.log_lines.append("[uninstall] ✔ 已还原 QQ 启动入口")
 
     def _refresh_launched_pids(self):
         try:
@@ -553,7 +752,7 @@ class NapCatManager(DownloadMixin):
 
             if IS_WINDOWS:
                 if not self._find_entry():
-                    self.log_lines.append("[start] ✘ 未检测到已安装的 NapCat，请先在网页界面选择版本并安装")
+                    self.log_lines.append("[start] ✘ 未检测到已安装的 NapCat，请先在配置界面选择版本并安装")
                     return False
 
                 from .utils import is_qq_installed
@@ -581,7 +780,7 @@ class NapCatManager(DownloadMixin):
                 root = self._find_new_style_root()
 
                 if not root:
-                    self.log_lines.append("[start] ✘ 未检测到已安装的 NapCat，请先在网页界面选择版本并安装")
+                    self.log_lines.append("[start] ✘ 未检测到已安装的 NapCat，请先在配置界面选择版本并安装")
                     return False
 
                 self.log_lines.append(f"[start] ⚡ 使用新方案目录: {root}")
@@ -602,42 +801,49 @@ class NapCatManager(DownloadMixin):
                     f"(build {get_linux_qq_build_code()})"
                 )
 
-                # 依赖检测：g++（编译 launcher.so）+ Xvfb（虚拟显示），缺了自动装
-                missing_deps = []
-                if not shutil.which("g++"):
-                    missing_deps.append("g++")
-                if not shutil.which("Xvfb"):
-                    missing_deps.append("xvfb")
-                if missing_deps:
-                    self.log_lines.append(f"[start] 缺少依赖: {', '.join(missing_deps)}，自动安装 ...")
-                    env_dep = {**os.environ, "TERM": "dumb", "DEBIAN_FRONTEND": "noninteractive"}
-                    try:
-                        proc = await asyncio.create_subprocess_exec(
-                            "sudo", "-S", "apt-get", "install", "-y", *missing_deps,
-                            stdin=asyncio.subprocess.PIPE,
-                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                            env=env_dep,
-                        )
-                        out, _ = await asyncio.wait_for(
-                            proc.communicate(input=(pw + "\n").encode()), timeout=300,
-                        )
-                        if proc.returncode == 0:
-                            self.log_lines.append(f"[start] ✔ 依赖安装成功: {', '.join(missing_deps)}")
-                        else:
-                            tail = (out or b"").decode("utf-8", "ignore")[-200:]
-                            self.log_lines.append(f"[start] ✘ 依赖安装失败: {tail}")
-                            return False
-                    except Exception as e:
-                        self.log_lines.append(f"[start] ✘ 依赖安装异常: {e}")
-                        return False
-
-                if not shutil.which("Xvfb"):
-                    self.log_lines.append("[start] ⚠ 仍未检测到 Xvfb")
+                # 依赖检测：每次启动自动 apt install 全套运行依赖（已装的 apt 会跳过）
+                self.log_lines.append("[start] 检查系统依赖 ...")
+                env_dep = {**os.environ, "TERM": "dumb", "DEBIAN_FRONTEND": "noninteractive"}
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "sudo", "-S", "apt-get", "install", "-y", *LINUX_RUNTIME_DEPS,
+                        stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                        env=env_dep,
+                    )
+                    out, _ = await asyncio.wait_for(
+                        proc.communicate(input=(pw + "\n").encode()), timeout=600,
+                    )
+                    if proc.returncode == 0:
+                        self.log_lines.append("[start] ✔ 系统依赖就绪")
+                    else:
+                        tail = (out or b"").decode("utf-8", "ignore")[-300:]
+                        self.log_lines.append(f"[start] ✘ 依赖安装返回非零: {tail}")
+                except Exception as e:
+                    self.log_lines.append(f"[start] ✘ 依赖安装异常: {e}")
 
                 qq_real, qq_dir = self._find_qq_binary(root)
                 if not qq_dir:
                     self.log_lines.append("[start] ✘ 找不到可用的 qq 命令")
                     return False
+
+                # 官方注入方案：QQ 的 resources/app/package.json 的 main 指向
+                # loadNapCat.js，由它导入 NapCat 的 napcat.mjs。每次启动都校验，
+                # QQ 更新导致 package.json 被重置时会自动补回。
+                try:
+                    ok_inject = await self._ensure_qq_loader(pw, root / "napcat.mjs")
+                except Exception as e:
+                    self.log_lines.append(f"[start] ✘ 写入 QQ 注入入口异常: {e}")
+                    ok_inject = False
+                if not ok_inject:
+                    self.log_lines.append("[start] ✘ QQ 注入入口不可用，启动中止")
+                    return False
+
+                # 旧版 launcher.sh 会 LD_PRELOAD .so；启动时自动升级到 xvfb-run 方案
+                try:
+                    self._generate_launcher_files(root)
+                except Exception as e:
+                    self.log_lines.append(f"[start] ⚠ 更新 launcher.sh 失败: {e}")
 
                 base_path = os.environ.get("PATH", "") or \
                     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -662,26 +868,19 @@ class NapCatManager(DownloadMixin):
                 env_extra["HOME"] = user_home
                 if user_name:
                     env_extra["USER"] = user_name
-                env_extra["NAPCAT_BOOTMAIN"] = str(root)
-                env_extra["DISPLAY"] = ":1"
 
                 real_sudo = shutil.which("sudo") or "sudo"
-                cmd = [real_sudo, "-S", "-E", "env",
+                # -E 在新版 sudo 上会报警告且被忽略；变量已在 env 里显式传入
+                cmd = [real_sudo, "-S", "env",
                        f"PATH={launch_path}", f"HOME={user_home}"]
                 if user_name:
                     cmd.append(f"USER={user_name}")
-                cmd += [f"NAPCAT_BOOTMAIN={root}", f"DISPLAY=:1", "bash", "launcher.sh"]
+                cmd += ["bash", "launcher.sh"]
                 cwd = str(root)
                 creationflags = 0
 
-                try:
-                    subprocess.run(["pkill", "-f", "Xvfb :1"], timeout=5,
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                except Exception:
-                    pass
-
                 self.log_lines.append(f"[start] qq: {qq_real}")
-                self.log_lines.append("[start] 启动命令: sudo -E env ... bash launcher.sh")
+                self.log_lines.append("[start] 启动命令: sudo env ... bash launcher.sh")
 
             self._auto_link_done = False
             self._qq_logged_in = False
@@ -903,12 +1102,6 @@ class NapCatManager(DownloadMixin):
             self._cleanup_processes()
             self._kill_root_remnants()
 
-            if self._launch_fake_bin and self._launch_fake_bin.exists():
-                try:
-                    shutil.rmtree(self._launch_fake_bin, ignore_errors=True)
-                except Exception:
-                    pass
-                self._launch_fake_bin = None
             await asyncio.sleep(1.5)
             self.napcat_webui_url = ""
             self.napcat_token = ""
@@ -959,6 +1152,13 @@ class NapCatManager(DownloadMixin):
             return code == 0
 
         # native / windows
+        if not IS_WINDOWS:
+            try:
+                pw = (self.plugin.config.get("sudo_password", "") or "").strip()
+                await self._remove_qq_loader(pw)
+            except Exception as e:
+                self.log_lines.append(f"[uninstall] ⚠ 还原 QQ 入口异常: {e}")
+
         try:
             self._cleanup_processes()
             self._kill_root_remnants()
@@ -1006,6 +1206,20 @@ class NapCatManager(DownloadMixin):
         def _usable(url: str) -> bool:
             return "[::]" not in url and "0.0.0.0" not in url
 
+        # 无显卡服务器上 Chromium/dbus 的固定噪音，过滤掉避免刷屏和误判崩溃
+        noise_patterns = (
+            "GLX is not present",
+            "EGL_NOT_INITIALIZED",
+            "eglInitialize",
+            "ANGLE Display::initialize",
+            "Exiting GPU process",
+            "Initialization of all EGL display types failed",
+            "GLDisplayEGL::Initialize failed",
+            "Failed to connect to the bus",
+            "Failed to call method: org.freedesktop.DBus",
+            "libva error",
+        )
+
         while True:
             try:
                 line = await self.process.stdout.readline()
@@ -1015,6 +1229,8 @@ class NapCatManager(DownloadMixin):
                 break
             text = line.decode("utf-8", errors="ignore").strip()
             if not text:
+                continue
+            if any(p in text for p in noise_patterns):
                 continue
             if "接收 <-" not in text and "发送 ->" not in text:
                 self.log_lines.append(text)

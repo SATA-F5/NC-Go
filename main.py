@@ -251,6 +251,8 @@ class NapCatGoPlugin(Star):
         return json_response({"ok": True})
 
     async def api_install(self):
+        if self.manager.process and self.manager.process.returncode is None:
+            return error_response("NapCat 正在运行，请先停止后再安装新版本")
         try:
             payload = await request.json(default={})
         except Exception:

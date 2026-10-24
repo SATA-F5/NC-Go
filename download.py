@@ -15,7 +15,7 @@ from astrbot.api import logger
 
 from .utils import (
     IS_WINDOWS, IS_LINUX,
-    NAPCAT_RELEASE_BASE, NAPCAT_LINUX_LAUNCHER_CPP,
+    NAPCAT_RELEASE_BASE,
     DEFAULT_NAPCAT_VERSION,
     NAPCAT_MIRROR_CANDIDATES,
     LINUXQQ_DEB_URLS,
@@ -26,6 +26,7 @@ from .utils import (
     is_linux_qq_version_compatible, is_qq_installed,
     is_deb_build_compatible,
     DOCKER_WEBUI_PORT,
+    LINUX_RUNTIME_DEPS,
 )
 
 
@@ -42,6 +43,7 @@ class DownloadMixin:
     - self._is_new_style_install(d)
     - self._find_entry()
     - self._find_new_style_root()
+    - self._ensure_qq_loader(pw, napcat_mjs)
     - self._sudo_warm_async(pw)
     """
 
@@ -221,131 +223,33 @@ class DownloadMixin:
 
     # ---------- NapCat 下载 / 解压（Windows + Linux 共用） ----------
 
-    # 与 Ubuntu 实测方案完全一致的 launcher.sh（LD_PRELOAD + Xvfb :1）
+    # 与官方 NapCat-Installer/script/install.sh 对齐：用 xvfb-run 起虚拟屏
     LAUNCHER_SH_CONTENT = """#!/bin/bash
-Xvfb :1 -screen 0 1x1x8 +extension GLX +render > /dev/null 2>&1 &
-export DISPLAY=:1
-trap "" SIGPIPE
-LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
+# napcat-go launcher v3
+exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disable-gpu-compositing --disable-dev-shm-usage
 """
 
-    # .so 的 constructor 也会生成此文件，这里预生成一份保证就位
-    LOAD_NAPCAT_JS_CONTENT = (
-        "const path = require('path');"
-        "const CurrentPath = process.env.NAPCAT_BOOTMAIN || path.dirname(__filename);"
-        "(async () => {"
-        "    await import('file://' + path.join(CurrentPath, './napcat.mjs'));"
-        "})();"
-    )
+    def _generate_launcher_files(self, root: Path, force: bool = False) -> bool:
+        """生成/升级 launcher.sh。
 
-    def _generate_launcher_files(self, root: Path) -> bool:
-        """生成 launcher.sh 和 loadNapCat.js（仅在不存在时生成，不覆盖已有文件）。"""
-        ok = True
+        官方 Linux 安装脚本不编译 .so，而是 xvfb-run + qq；这里保持同样的启动
+        方式。带版本标记，旧版 launcher.sh 会在启动时自动升级。
+        """
         launcher = root / "launcher.sh"
-        if not launcher.exists():
-            try:
+        try:
+            old = ""
+            if launcher.exists():
+                try:
+                    old = launcher.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    old = ""
+            if force or not launcher.exists() or "napcat-go launcher v3" not in old:
                 launcher.write_text(self.LAUNCHER_SH_CONTENT, encoding="utf-8")
                 launcher.chmod(0o755)
                 self.log_lines.append(f"[download] ✔ 已生成 launcher.sh: {launcher}")
-            except Exception as e:
-                self.log_lines.append(f"[download] ✘ 生成 launcher.sh 失败: {e}")
-                ok = False
-        else:
-            self.log_lines.append(f"[download] ℹ launcher.sh 已存在，跳过: {launcher}")
-
-        loader = root / "loadNapCat.js"
-        if not loader.exists():
-            try:
-                loader.write_text(self.LOAD_NAPCAT_JS_CONTENT, encoding="utf-8")
-                self.log_lines.append(f"[download] ✔ 已生成 loadNapCat.js: {loader}")
-            except Exception as e:
-                self.log_lines.append(f"[download] ✘ 生成 loadNapCat.js 失败: {e}")
-                ok = False
-        return ok
-
-    async def _download_and_compile_launcher_so(self, root: Path) -> bool:
-        """下载 launcher.cpp 并编译为 libnapcat_launcher.so（g++ -shared -fPIC -ldl）。
-        编译失败即视为源码被篡改或工具链缺失，直接报错。"""
-        cpp_path = root / "launcher.cpp"
-        so_path = root / "libnapcat_launcher.so"
-
-        if so_path.exists():
-            self.log_lines.append(f"[install] ✔ libnapcat_launcher.so 已存在，跳过编译: {so_path}")
-            return True
-
-        # 构建下载源：官方 raw + 用户镜像 + 内置镜像
-        user_mirror = (self.plugin.config.get("napcat_download_mirror") or "").strip()
-        prefixes: List[str] = []
-        if user_mirror:
-            prefixes.append(user_mirror)
-        for m in NAPCAT_MIRROR_CANDIDATES:
-            if m not in prefixes:
-                prefixes.append(m)
-        urls: List[Tuple[str, str]] = []
-        for p in prefixes:
-            urls.append((f"{p.rstrip('/')}/{NAPCAT_LINUX_LAUNCHER_CPP}", p))
-        urls.append((NAPCAT_LINUX_LAUNCHER_CPP, "github-raw"))
-
-        downloaded = False
-        for idx, (url, label) in enumerate(urls, 1):
-            self.log_lines.append(f"[install] [{idx}/{len(urls)}] 下载 launcher.cpp: {label}")
-            try:
-                ssl_ctx = make_ssl_context(strict=(label == "github-raw"))
-                connector = aiohttp.TCPConnector(ssl=ssl_ctx)
-                async with aiohttp.ClientSession(connector=connector) as session:
-                    async with session.get(
-                        url,
-                        timeout=aiohttp.ClientTimeout(total=60, sock_connect=10, sock_read=30),
-                    ) as resp:
-                        if resp.status != 200:
-                            self.log_lines.append(f"[install]   HTTP {resp.status}，跳过")
-                            continue
-                        text = await resp.text()
-                if not text or "extern \"C\"" not in text:
-                    self.log_lines.append("[install]   ✘ 内容不像是 launcher.cpp 源码，跳过")
-                    continue
-                cpp_path.write_text(text, encoding="utf-8")
-                downloaded = True
-                self.log_lines.append(f"[install]   ✔ launcher.cpp 下载成功 ({len(text)} 字节)")
-                break
-            except Exception as e:
-                self.log_lines.append(f"[install]   下载异常: {e}")
-                continue
-
-        if not downloaded:
-            self.log_lines.append("[install] ✘ launcher.cpp 所有来源均下载失败")
-            return False
-
-        # 编译：g++ -shared -fPIC launcher.cpp -o libnapcat_launcher.so -ldl
-        if not shutil.which("g++"):
-            self.log_lines.append("[install] ✘ 未找到 g++，无法编译 libnapcat_launcher.so")
-            self.log_lines.append("[install]   请执行: sudo apt-get install -y g++")
-            return False
-
-        self.log_lines.append("[install] 正在编译 libnapcat_launcher.so ...")
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "g++", "-shared", "-fPIC", str(cpp_path),
-                "-o", str(so_path), "-ldl",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                cwd=str(root),
-            )
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
-        except asyncio.TimeoutError:
-            self.log_lines.append("[install] ✘ 编译超时")
-            return False
         except Exception as e:
-            self.log_lines.append(f"[install] ✘ 编译异常: {e}")
+            self.log_lines.append(f"[download] ✘ 生成 launcher.sh 失败: {e}")
             return False
-
-        if proc.returncode != 0 or not so_path.exists():
-            self.log_lines.append(
-                f"[install] ✘ 编译失败 (exit {proc.returncode}): "
-                f"{out.decode('utf-8','ignore')[-300:] if out else ''}"
-            )
-            return False
-
-        self.log_lines.append(f"[install] ✔ 编译成功: {so_path} ({so_path.stat().st_size} 字节)")
         return True
 
     async def _extract_napcat(self, archive_path: Path) -> bool:
@@ -353,6 +257,13 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
             self.napcat_dir.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(archive_path, "r") as zf:
                 zf.extractall(self.napcat_dir)
+
+            # 官方 zip 的 package.json 保持原样；NapCat 入口由 QQ 侧的
+            # loadNapCat.js 通过绝对 file:// URL 导入，不再需要改这里的 type。
+            if not IS_WINDOWS:
+                if not (self.napcat_dir / "napcat.mjs").exists():
+                    self.log_lines.append("[download] ✘ 压缩包内缺少 napcat.mjs")
+                    return False
 
             if not IS_WINDOWS:
                 try:
@@ -363,8 +274,8 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
                             sh.chmod(st.st_mode | 0o555)
                         except Exception:
                             pass
-                    # 生成 launcher.sh + loadNapCat.js（仅在不存在时，不覆盖）
-                    self._generate_launcher_files(self.napcat_dir)
+                    # 生成/升级 launcher.sh（安装时强制更新）
+                    self._generate_launcher_files(self.napcat_dir, force=True)
                     # napcat.mjs 保证可读
                     for name in ("napcat.mjs",):
                         p = self.napcat_dir / name
@@ -383,6 +294,27 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
         except Exception as e:
             logger.error(f"Extract failed: {e}")
             return False
+
+    def _clean_old_napcat_install(self) -> None:
+        """安装新版本前清理旧文件：删除 napcat_dir 下除 config/ 之外的所有内容。"""
+        try:
+            if not self.napcat_dir.exists():
+                return
+            kept = 0
+            for child in self.napcat_dir.iterdir():
+                if child.name == "config":
+                    kept += 1
+                    continue
+                try:
+                    if child.is_dir():
+                        shutil.rmtree(child, ignore_errors=True)
+                    else:
+                        child.unlink()
+                except Exception as e:
+                    self.log_lines.append(f"[download] ⚠ 清理 {child.name} 失败: {e}")
+            self.log_lines.append("[download] ✔ 已清理旧版本文件（保留 config 目录）")
+        except Exception as e:
+            self.log_lines.append(f"[download] ⚠ 清理旧版本异常: {e}")
 
     async def download_napcat(self, version: Optional[str] = None) -> bool:
         if getattr(self, "_downloading", False):
@@ -403,6 +335,9 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
             self.download_state["downloading"] = False
             self.download_state["phase"] = "failed"
             return False
+
+        # 安装新版本前清理旧文件（保留 config 配置目录）
+        self._clean_old_napcat_install()
 
         try:
             if version and str(version).strip():
@@ -956,10 +891,10 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
                 return False
 
     async def install_linux_napcat(self, version: Optional[str] = None) -> bool:
-        """Linux native 一键安装（与 Ubuntu 实测方案一致）：
-        装 QQ -> 装依赖(xvfb/g++) -> 下载 NapCat.Shell.zip(SHA256) -> 解压
-        -> 下载 launcher.cpp 编译 libnapcat_launcher.so -> 生成 launcher.sh。
-        不再 sudo bash install.sh，不再 patch QQ 磁盘文件（.so 运行时 LD_PRELOAD hook）。
+        """Linux native 一键安装（与官方 NapCat-Installer 对齐）：
+        装 QQ -> 装依赖 -> 下载 NapCat.Shell.zip(SHA256) -> 解压
+        -> 写 resources/app/loadNapCat.js -> 改 QQ package.json 的 main -> 生成 launcher.sh。
+        不再编译 .so，也不再创建任何 napcat/napcat.mjs 软链接。
         """
         self.napcat_dir.mkdir(parents=True, exist_ok=True)
         self._reset_download_state()
@@ -984,47 +919,32 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
             self.download_state["message"] = "LinuxQQ 未就绪"
             return False
 
-        # 1.5) 确保编译/运行依赖：g++（编译 .so）+ xvfb（launcher.sh 用 Xvfb :1）
-        missing_deps = []
-        if not shutil.which("g++"):
-            missing_deps.append("g++")
-        if not shutil.which("Xvfb"):
-            missing_deps.append("xvfb")
-        if missing_deps:
-            self.log_lines.append(f"[install] 缺少依赖: {', '.join(missing_deps)}，尝试安装 ...")
-            pw = (self.plugin.config.get("sudo_password", "") or "").strip()
-            if pw and await self._sudo_warm_async(pw):
-                env = {**os.environ, "TERM": "dumb", "DEBIAN_FRONTEND": "noninteractive"}
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        "sudo", "-S", "apt-get", "install", "-y", *missing_deps,
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                        env=env,
+        # 1.5) 确保全套系统依赖（已装的 apt 会快速跳过）
+        self.log_lines.append("[install] 检查系统依赖 ...")
+        pw = (self.plugin.config.get("sudo_password", "") or "").strip()
+        if pw and await self._sudo_warm_async(pw):
+            env = {**os.environ, "TERM": "dumb", "DEBIAN_FRONTEND": "noninteractive"}
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "sudo", "-S", "apt-get", "install", "-y", *LINUX_RUNTIME_DEPS,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                    env=env,
+                )
+                out, _ = await asyncio.wait_for(
+                    proc.communicate(input=(pw + "\n").encode()), timeout=600,
+                )
+                if proc.returncode == 0:
+                    self.log_lines.append("[install] ✔ 系统依赖就绪")
+                else:
+                    self.log_lines.append(
+                        f"[install] ⚠ 依赖安装返回非零: "
+                        f"{out.decode('utf-8','ignore')[-200:]}"
                     )
-                    out, _ = await proc.communicate(input=(pw + "\n").encode(), timeout=300)
-                    if proc.returncode == 0:
-                        self.log_lines.append(f"[install] ✔ 依赖安装成功: {', '.join(missing_deps)}")
-                    else:
-                        self.log_lines.append(
-                            f"[install] ✘ 依赖安装失败: "
-                            f"{out.decode('utf-8','ignore')[-200:]}"
-                        )
-                        self.download_state["phase"] = "failed"
-                        self.download_state["downloading"] = False
-                        self.download_state["message"] = f"缺少依赖: {', '.join(missing_deps)}"
-                        return False
-                except Exception as e:
-                    self.log_lines.append(f"[install] ✘ 依赖安装异常: {e}")
-                    self.download_state["phase"] = "failed"
-                    self.download_state["downloading"] = False
-                    return False
-            else:
-                self.log_lines.append(f"[install] ✘ 无 sudo 密码，无法安装依赖: {', '.join(missing_deps)}")
-                self.download_state["phase"] = "failed"
-                self.download_state["downloading"] = False
-                self.download_state["message"] = f"缺少依赖: {', '.join(missing_deps)}"
-                return False
+            except Exception as e:
+                self.log_lines.append(f"[install] ⚠ 依赖安装异常: {e}")
+        else:
+            self.log_lines.append("[install] ⚠ 无 sudo 密码，跳过依赖自动安装")
 
         # 2) 清理旧目录
         if not await self._backup_inner_napcat_if_needed():
@@ -1050,24 +970,25 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
             self.download_state["message"] = "NapCat 下载或 SHA256 校验失败"
             return False
 
-        # 4) 下载 launcher.cpp 并编译 libnapcat_launcher.so
-        self.log_lines.append("[install] 正在编译 libnapcat_launcher.so（LD_PRELOAD 注入器）...")
+        # 4) 写入 QQ 注入入口：官方方案是 resources/app/loadNapCat.js +
+        #    package.json 的 main 指向它，不再使用 LD_PRELOAD/.so。
+        self.log_lines.append("[install] 正在写入 QQ 注入入口（loadNapCat.js）...")
         try:
-            ok_so = await self._download_and_compile_launcher_so(self.napcat_dir)
+            ok_inject = await self._ensure_qq_loader(pw, self.napcat_dir / "napcat.mjs")
         except Exception as e:
-            self.log_lines.append(f"[install] ✘ launcher.so 编译异常: {e}")
-            ok_so = False
-        if not ok_so:
+            self.log_lines.append(f"[install] ✘ 写入注入入口异常: {e}")
+            ok_inject = False
+        if not ok_inject:
             self.download_state["phase"] = "failed"
             self.download_state["downloading"] = False
-            self.download_state["message"] = "libnapcat_launcher.so 编译失败"
+            self.download_state["message"] = "QQ 注入入口写入失败"
             return False
 
-        # 5) 校验结构：launcher.sh + libnapcat_launcher.so
+        # 5) 校验结构：launcher.sh + napcat.mjs
         ok = self._is_new_style_install(self.napcat_dir)
         if ok:
             self.log_lines.append(
-                "[install] ✔ 安装完成（launcher.sh + libnapcat_launcher.so + napcat.mjs 已就位）"
+                "[install] ✔ 安装完成（launcher.sh + napcat.mjs + loadNapCat.js 已就位）"
             )
             self.download_state["phase"] = "done"
             self.download_state["downloading"] = False
@@ -1075,7 +996,7 @@ LD_PRELOAD=./libnapcat_launcher.so qq --no-sandbox
             self.download_state["current_mirror"] = ""
             self.download_state["message"] = "安装完成"
         else:
-            self.log_lines.append("[install] ✘ 安装后未找到 launcher.sh / libnapcat_launcher.so")
+            self.log_lines.append("[install] ✘ 安装后未找到 launcher.sh / napcat.mjs")
             self.download_state["phase"] = "failed"
             self.download_state["downloading"] = False
             self.download_state["message"] = "安装后未找到启动器"
