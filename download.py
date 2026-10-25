@@ -183,7 +183,7 @@ class DownloadMixin:
         return result
 
     async def list_napcat_releases(self) -> List[Dict[str, Any]]:
-        """通过 GitHub API 列出 NapCat 可下载版本（最近 30 条）。
+        """通过 GitHub API 列出 NapCat 可下载版本（最近 40 条）。
 
         返回 [{tag, name, published_at, prerelease}, ...]，失败返回空列表。
         """
@@ -193,7 +193,7 @@ class DownloadMixin:
             connector = aiohttp.TCPConnector(ssl=ssl_ctx)
             async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.get(
-                    f"{api_base}/releases?per_page=30",
+                    f"{api_base}/releases?per_page=40",
                     timeout=aiohttp.ClientTimeout(total=20, sock_connect=8),
                     headers={"Accept": "application/vnd.github+json",
                              "User-Agent": "napcat-go-plugin"},
@@ -747,7 +747,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                 + str(self.napcat_dir)
             )
             self.log_lines.append("[qq-install] 手动下载地址（浏览器打开，任选其一）：")
-            self.log_lines.append("[qq-install]   https://github.com/SATA-F5/NC_Go/releases")
+            self.log_lines.append("[qq-install]   https://github.com/SATA-F5/NC-Go/releases")
             self.log_lines.append("[qq-install]   https://github.com/Rodert/qq-versions/releases")
             self.download_state["phase"] = "failed"
             self.download_state["message"] = "LinuxQQ 下载失败"
