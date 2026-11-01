@@ -717,7 +717,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                 + str(self.napcat_dir)
             )
             self.log_lines.append("[qq-install] 手动下载地址（浏览器打开，任选其一）：")
-            self.log_lines.append("[qq-install]   https://github.com/SATA-F5/NC_Go/releases")
+            self.log_lines.append("[qq-install]   https://github.com/SATA-F5/NC-Go/releases")
             self.log_lines.append("[qq-install]   https://github.com/Rodert/qq-versions/releases")
             self.download_state["phase"] = "failed"
             self.download_state["message"] = "LinuxQQ 下载失败"

@@ -79,7 +79,7 @@ NAPCAT_SUPPORTED_QQ_MAX = 999999
 RECOMMENDED_LINUXQQ_VERSION = "3.2.34"
 
 LINUXQQ_DEB_URLS = [
-    "https://github.com/SATA-F5/NC_Go/releases/download/data-v0.0.0/QQ_3.2.34_Linux_amd64.deb",
+    "https://github.com/SATA-F5/NC-Go/releases/download/data-v0.0.0/QQ_3.2.34_Linux_amd64.deb",
 ]
 
 IS_WINDOWS = platform.system() == "Windows"
