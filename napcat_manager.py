@@ -31,6 +31,7 @@ from .utils import (
     LINUX_RUNTIME_DEPS,
 )
 from .download import DownloadMixin
+from . import linux_tools
 
 
 class NapCatManager(DownloadMixin):
@@ -51,7 +52,10 @@ class NapCatManager(DownloadMixin):
         self.process: Optional[asyncio.subprocess.Process] = None
         self.napcat_token: str = ""
         self.napcat_webui_url: str = ""
-        self.napcat_port: int = DEFAULT_CONFIG["napcat_port"]
+        try:
+            self.napcat_port: int = int(self.plugin.config.get("napcat_port", DEFAULT_CONFIG["napcat_port"]) or 6099)
+        except (TypeError, ValueError):
+            self.napcat_port = DEFAULT_CONFIG["napcat_port"]
         self.napcat_qq_number: str = ""    # 从日志里抓到的 QQ 号
         self._log_task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
@@ -81,11 +85,11 @@ class NapCatManager(DownloadMixin):
         self.log_lines.append(msg)
         try:
             if level == "warning":
-                logger.warning(f"[NapCat_Go] {msg}")
+                logger.warning(f"[NapCat Go] {msg}")
             elif level == "error":
-                logger.error(f"[NapCat_Go] {msg}")
+                logger.error(f"[NapCat Go] {msg}")
             else:
-                logger.info(f"[NapCat_Go] {msg}")
+                logger.info(f"[NapCat Go] {msg}")
         except Exception:
             pass
 
@@ -155,7 +159,7 @@ class NapCatManager(DownloadMixin):
                 json.dump(data, f, indent=2, ensure_ascii=False)
             self.log_lines.append(f"[config] 写入 {p.name}")
         except Exception as e:
-            self.log_lines.append(f"[config] ⚠ 写入 napcat.json 失败: {e}")
+            self.log_lines.append(f"[config] ⚠写入 napcat.json 失败: {e}")
 
         if qq_number:
             try:
@@ -175,7 +179,7 @@ class NapCatManager(DownloadMixin):
                     json.dump(data, f, indent=2, ensure_ascii=False)
                 self.log_lines.append(f"[config] 写入 {p.name}")
             except Exception as e:
-                self.log_lines.append(f"[config] ⚠ 写入 napcat_{qq_number}.json 失败: {e}")
+                self.log_lines.append(f"[config] ⚠写入 napcat_{qq_number}.json 失败: {e}")
 
             try:
                 p = cfg_dir / f"napcat_protocol_{qq_number}.json"
@@ -193,7 +197,7 @@ class NapCatManager(DownloadMixin):
                     json.dump(data, f, indent=2, ensure_ascii=False)
                 self.log_lines.append(f"[config] 写入 {p.name}")
             except Exception as e:
-                self.log_lines.append(f"[config] ⚠ 写入 napcat_protocol_{qq_number}.json 失败: {e}")
+                self.log_lines.append(f"[config] ⚠写入 napcat_protocol_{qq_number}.json 失败: {e}")
 
             try:
                 p = cfg_dir / f"onebot11_{qq_number}.json"
@@ -204,7 +208,7 @@ class NapCatManager(DownloadMixin):
                 else:
                     self.log_lines.append(f"[config] 已存在 {p.name}")
             except Exception as e:
-                self.log_lines.append(f"[config] ⚠ 创建 onebot11_{qq_number}.json 失败: {e}")
+                self.log_lines.append(f"[config] ⚠创建 onebot11_{qq_number}.json 失败: {e}")
 
         try:
             p = cfg_dir / "webui.json"
@@ -219,11 +223,15 @@ class NapCatManager(DownloadMixin):
                     pass
             if qq_number:
                 data["autoLoginAccount"] = qq_number
+            try:
+                data["port"] = int(self.plugin.config.get("napcat_port", data.get("port", 6099)) or 6099)
+            except (TypeError, ValueError):
+                pass
             with open(p, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
             self.log_lines.append(f"[config] 写入 {p.name}")
         except Exception as e:
-            self.log_lines.append(f"[config] ⚠ 写入 webui.json 失败: {e}")
+            self.log_lines.append(f"[config] ⚠写入 webui.json 失败: {e}")
 
     def _find_qq_binary(self, root: Path) -> Tuple[Optional[str], Optional[str]]:
         cand_which = shutil.which("qq")
@@ -268,7 +276,7 @@ class NapCatManager(DownloadMixin):
 
     @staticmethod
     def _loader_js(napcat_mjs: Path) -> str:
-        # 与官方 install.sh 的 loadNapCat.js 相同，只是用绝对路径，避免依赖 cwd
+        # 与官install.sh loadNapCat.js 相同，只是用绝对路径，避免依cwd
         return (
             "// napcat-go loader\n"
             "const { pathToFileURL } = require('node:url');\n"
@@ -276,35 +284,12 @@ class NapCatManager(DownloadMixin):
         )
 
     async def _run_sudo(self, pw: str, *args: str, timeout: int = 30) -> Tuple[int, str]:
-        if IS_WINDOWS or not shutil.which("sudo"):
-            return -1, "sudo 不可用"
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "sudo", "-S", *args,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-        except Exception as e:
-            return -1, str(e)
-        try:
-            out, _ = await asyncio.wait_for(
-                proc.communicate(input=(pw + "\n").encode()), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            return -1, "sudo 命令超时"
-        return proc.returncode or 0, (out or b"").decode("utf-8", "ignore")
+        return await linux_tools.run_sudo(self.plugin, list(args), pw, timeout)
 
     async def _ensure_qq_loader(self, pw: str, napcat_mjs: Path) -> bool:
-        """把 QQ 启动入口指向 NapCat（官方 loadNapCat.js 方案）。
-
-        写 <QQ>/resources/app/loadNapCat.js，并把 package.json 的 main 改为
-        ./loadNapCat.js。不改 NapCat 目录结构，不需要 .so、软链接或 cwd 假设。
-        """
+        """QQ 启动入口指向 NapCat（官loadNapCat.js 方案）
+        <QQ>/resources/app/loadNapCat.js，并package.json main 改为
+        ./loadNapCat.js。不NapCat 目录结构，不需.so、软链接cwd 假设        """
         if IS_WINDOWS:
             return False
         app = self._qq_app_dir()
@@ -358,7 +343,7 @@ class NapCatManager(DownloadMixin):
             tmp.write_text(js, encoding="utf-8")
             code, out = await self._run_sudo(pw, "install", "-m", "644", str(tmp), str(loader))
             if code != 0:
-                self.log_lines.append(f"[inject] ✘ 写入 loadNapCat.js 失败: {out[-300:]}")
+                self.log_lines.append(f"[inject] ✔写入 loadNapCat.js 失败: {out[-300:]}")
                 return False
 
             patch = (
@@ -372,10 +357,10 @@ class NapCatManager(DownloadMixin):
             )
             code, out = await self._run_sudo(pw, "python3", "-c", patch)
             if code != 0:
-                self.log_lines.append(f"[inject] ✘ 修改 QQ package.json 失败: {out[-300:]}")
+                self.log_lines.append(f"[inject] ✔修改 QQ package.json 失败: {out[-300:]}")
                 return False
         except Exception as e:
-            self.log_lines.append(f"[inject] ✘ 写入注入入口异常: {e}")
+            self.log_lines.append(f"[inject] ✔写入注入入口异常: {e}")
             return False
         finally:
             try:
@@ -432,7 +417,7 @@ class NapCatManager(DownloadMixin):
         )
         code, out = await self._run_sudo(pw, "python3", "-c", patch)
         if code != 0:
-            self.log_lines.append(f"[uninstall] ⚠ 还原 QQ package.json 失败: {out[-200:]}")
+            self.log_lines.append(f"[uninstall] ⚠还原 QQ package.json 失败: {out[-200:]}")
             return
 
         if bak_js.exists():
@@ -440,7 +425,7 @@ class NapCatManager(DownloadMixin):
         else:
             code, out = await self._run_sudo(pw, "rm", "-f", str(loader))
         if code != 0:
-            self.log_lines.append(f"[uninstall] ⚠ 还原 loadNapCat.js 失败: {out[-200:]}")
+            self.log_lines.append(f"[uninstall] ⚠还原 loadNapCat.js 失败: {out[-200:]}")
             return
 
         for p in (bak_js, bak_main):
@@ -469,31 +454,17 @@ class NapCatManager(DownloadMixin):
             kill_pids(self._launched_pids)
             self._launched_pids.clear()
 
-    def _sudo_pkill(self, pattern: str, sig: str = "KILL") -> None:
-        pw = (self.plugin.config.get("sudo_password", "") or "").strip()
+    def _sudo_pkill(self, pattern: str, sig: str = "KILL", pw: str = "") -> None:
         if IS_WINDOWS or not pw or not shutil.which("sudo"):
             return
-        try:
-            subprocess.run(
-                ["sudo", "-S", "pkill", f"-{sig}", "-f", pattern],
-                input=(pw + "\n").encode(),
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15,
-            )
-        except Exception:
-            pass
+        linux_tools.run_sudo_sync(self.plugin, ["pkill", f"-{sig}", "-f", pattern], pw, timeout=15)
 
-    def _sudo_kill_pids(self, pids: List[int], sig: str = "KILL") -> None:
-        pw = (self.plugin.config.get("sudo_password", "") or "").strip()
+    def _sudo_kill_pids(self, pids: List[int], sig: str = "KILL", pw: str = "") -> None:
         if IS_WINDOWS or not pw or not shutil.which("sudo") or not pids:
             return
-        try:
-            subprocess.run(
-                ["sudo", "-S", "kill", f"-{sig}", *[str(p) for p in pids]],
-                input=(pw + "\n").encode(),
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15,
-            )
-        except Exception:
-            pass
+        linux_tools.run_sudo_sync(
+            self.plugin, ["kill", f"-{sig}", *[str(p) for p in pids]], pw, timeout=15
+        )
 
     def _list_remnant_pids(self) -> List[Tuple[int, int, str, str]]:
         if IS_WINDOWS:
@@ -533,22 +504,21 @@ class NapCatManager(DownloadMixin):
                 out.append((pid, ppid, stat, args))
         return out
 
-    def _kill_root_remnants(self) -> None:
+    def _kill_root_remnants(self, pw: str = "") -> None:
         if IS_WINDOWS:
             return
-        pw = (self.plugin.config.get("sudo_password", "") or "").strip()
         if not pw or not shutil.which("sudo"):
             return
 
         self.log_lines.append("[stop] 开始清理所有 NapCat/QQ/Xvfb 残留进程 ...")
 
         for attempt in range(1, 4):
-            self._sudo_pkill(REMNANT_PATTERN, "KILL")
+            self._sudo_pkill(REMNANT_PATTERN, "KILL", pw)
             time.sleep(1.0)
 
             rems = self._list_remnant_pids()
             if not rems:
-                self.log_lines.append(f"[stop] ✔ 残留进程已清理干净（第 {attempt} 轮）")
+                self.log_lines.append(f"[stop] ✔残留进程已清理干净（第 {attempt} 轮）")
                 return
 
             alive = [(p, pp, st, ar) for (p, pp, st, ar) in rems if "Z" not in st]
@@ -561,15 +531,15 @@ class NapCatManager(DownloadMixin):
             )
 
             if alive:
-                self._sudo_kill_pids([p for p, _, _, _ in alive], "KILL")
+                self._sudo_kill_pids([p for p, _, _, _ in alive], "KILL", pw)
             for _pid, ppid, _stat, _args in zombies:
                 if ppid and ppid > 1:
-                    self._sudo_kill_pids([ppid], "KILL")
+                    self._sudo_kill_pids([ppid], "KILL", pw)
             time.sleep(1.0)
 
         rems = self._list_remnant_pids()
         if not rems:
-            self.log_lines.append("[stop] ✔ 残留进程已清理干净")
+            self.log_lines.append("[stop] ✔残留进程已清理干净")
             return
 
         alive = [(p, pp, st, ar) for (p, pp, st, ar) in rems if "Z" not in st]
@@ -593,46 +563,21 @@ class NapCatManager(DownloadMixin):
             "current_index": 0, "total_mirrors": 0, "phase": "idle", "message": "",
         })
 
-    # ----- sudo 凭证：仅通过 stdin 喂密码，不落盘 -----
+    # ----- sudo 凭证：仅通过 stdin 喂密码，不落-----
 
     def _sudo_warm_sync(self, pw: str) -> bool:
-        """同步预热 sudo 凭证缓存（sudo -S -v），密码仅走 stdin，不写盘。"""
+        """同步预热 sudo 凭证缓存（sudo -S -p "" -v），密码仅走 stdin。"""
         if IS_WINDOWS or not pw or not shutil.which("sudo"):
             return False
-        try:
-            r = subprocess.run(
-                ["sudo", "-S", "-v"],
-                input=(pw + "\n").encode(),
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=20,
-            )
-            return r.returncode == 0
-        except Exception:
-            return False
+        code, _ = linux_tools.run_sudo_sync(self.plugin, ["-v"], pw, timeout=20)
+        return code == 0
 
     async def _sudo_warm_async(self, pw: str) -> bool:
-        """异步预热 sudo 凭证缓存（sudo -S -v），密码仅走 stdin，不写盘。"""
+        """异步预热 sudo 凭证缓存（sudo -S -p "" -v），密码仅走 stdin。"""
         if IS_WINDOWS or not pw or not shutil.which("sudo"):
             return False
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "sudo", "-S", "-v",
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            try:
-                await asyncio.wait_for(
-                    proc.communicate(input=(pw + "\n").encode()),
-                    timeout=20,
-                )
-            except asyncio.TimeoutError:
-                try: proc.kill()
-                except Exception: pass
-                return False
-            return proc.returncode == 0
-        except Exception:
-            return False
+        code, _ = await linux_tools.run_sudo(self.plugin, ["-v"], pw, timeout=20)
+        return code == 0
 
     def _migrate_legacy(self):
         if not self.legacy_napcat_dir.exists():
@@ -647,7 +592,7 @@ class NapCatManager(DownloadMixin):
             shutil.copytree(self.legacy_napcat_dir, self.napcat_dir, dirs_exist_ok=True)
             self.log_lines.append(f"[migrate] {self.legacy_napcat_dir} -> {self.napcat_dir}")
         except Exception as e:
-            logger.error(f"[NapCat_Go] migration failed: {e}")
+            logger.error(f"[NapCat Go] migration failed: {e}")
 
     # ---------- Docker 命令 ----------
 
@@ -737,7 +682,7 @@ class NapCatManager(DownloadMixin):
 
     # ---------- 启动 / 停止 ----------
 
-    async def _start_native(self) -> bool:
+    async def _start_native(self, sudo_password: str = "") -> bool:
         async with self._lock:
             if self.process and self.process.returncode is None:
                 return True
@@ -748,7 +693,7 @@ class NapCatManager(DownloadMixin):
             qq_number = str(self.plugin.config.get("qq_number", "") or "").strip()
 
             env_extra: Dict[str, str] = {}
-            pw = ""
+            pw = (sudo_password or "").strip()
 
             if IS_WINDOWS:
                 if not self._find_entry():
@@ -783,48 +728,39 @@ class NapCatManager(DownloadMixin):
                     self.log_lines.append("[start] ✘ 未检测到已安装的 NapCat，请先在配置界面选择版本并安装")
                     return False
 
-                self.log_lines.append(f"[start] ⚡ 使用新方案目录: {root}")
+                self.log_lines.append(f"[start] ⚠ 使用新方案目录: {root}")
 
-                pw = (self.plugin.config.get("sudo_password", "") or "").strip()
                 if not pw or not shutil.which("sudo"):
-                    self.log_lines.append("[start] ✘ 未配置 sudo 密码或系统无 sudo")
+                    self.log_lines.append("[start] ✘ 未提供 sudo 密码或系统无 sudo")
                     return False
 
-                # QQ 检测：未装或不兼容时自动 purge + 装推荐版
-                qq_ok = await self.ensure_linux_qq_compatible()
+                # QQ 检测：未装或不兼容时自purge + 装推荐版
+                qq_ok = await self.ensure_linux_qq_compatible(pw)
                 if not qq_ok:
-                    self.log_lines.append("[start] ✘ LinuxQQ 未就绪（未安装或不兼容）")
+                    self.log_lines.append("[start] ✔LinuxQQ 未就绪（未安装或不兼容）")
                     self.log_lines.append(f"[start] 兼容 build 范围: [{NAPCAT_SUPPORTED_QQ_MIN}, {NAPCAT_SUPPORTED_QQ_MAX}]")
                     return False
                 self.log_lines.append(
-                    f"[start] ✔ LinuxQQ 就绪: {get_linux_qq_version()} "
+                    f"[start] ✔LinuxQQ 就绪: {get_linux_qq_version()} "
                     f"(build {get_linux_qq_build_code()})"
                 )
 
                 # 依赖检测：每次启动自动 apt install 全套运行依赖（已装的 apt 会跳过）
                 self.log_lines.append("[start] 检查系统依赖 ...")
-                env_dep = {**os.environ, "TERM": "dumb", "DEBIAN_FRONTEND": "noninteractive"}
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        "sudo", "-S", "apt-get", "install", "-y", *LINUX_RUNTIME_DEPS,
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                        env=env_dep,
-                    )
-                    out, _ = await asyncio.wait_for(
-                        proc.communicate(input=(pw + "\n").encode()), timeout=600,
-                    )
-                    if proc.returncode == 0:
-                        self.log_lines.append("[start] ✔ 系统依赖就绪")
-                    else:
-                        tail = (out or b"").decode("utf-8", "ignore")[-300:]
-                        self.log_lines.append(f"[start] ✘ 依赖安装返回非零: {tail}")
-                except Exception as e:
-                    self.log_lines.append(f"[start] ✘ 依赖安装异常: {e}")
+                code, out = await self._run_sudo(
+                    pw,
+                    "env", "DEBIAN_FRONTEND=noninteractive",
+                    "apt-get", "install", "-y", *LINUX_RUNTIME_DEPS,
+                    timeout=600,
+                )
+                if code == 0:
+                    self.log_lines.append("[start] ✔系统依赖就绪")
+                else:
+                    self.log_lines.append(f"[start] ✔依赖安装返回非零: {out[-300:]}")
 
                 qq_real, qq_dir = self._find_qq_binary(root)
                 if not qq_dir:
-                    self.log_lines.append("[start] ✘ 找不到可用的 qq 命令")
+                    self.log_lines.append("[start] ✔找不到可用的 qq 命令")
                     return False
 
                 # 官方注入方案：QQ 的 resources/app/package.json 的 main 指向
@@ -833,17 +769,17 @@ class NapCatManager(DownloadMixin):
                 try:
                     ok_inject = await self._ensure_qq_loader(pw, root / "napcat.mjs")
                 except Exception as e:
-                    self.log_lines.append(f"[start] ✘ 写入 QQ 注入入口异常: {e}")
+                    self.log_lines.append(f"[start] ✔写入 QQ 注入入口异常: {e}")
                     ok_inject = False
                 if not ok_inject:
-                    self.log_lines.append("[start] ✘ QQ 注入入口不可用，启动中止")
+                    self.log_lines.append("[start] ✔QQ 注入入口不可用，启动中止")
                     return False
 
-                # 旧版 launcher.sh 会 LD_PRELOAD .so；启动时自动升级到 xvfb-run 方案
+                # 旧版 launcher.sh LD_PRELOAD .so；启动时自动升级xvfb-run 方案
                 try:
                     self._generate_launcher_files(root)
                 except Exception as e:
-                    self.log_lines.append(f"[start] ⚠ 更新 launcher.sh 失败: {e}")
+                    self.log_lines.append(f"[start] ⚠更新 launcher.sh 失败: {e}")
 
                 base_path = os.environ.get("PATH", "") or \
                     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -871,7 +807,7 @@ class NapCatManager(DownloadMixin):
 
                 real_sudo = shutil.which("sudo") or "sudo"
                 # -E 在新版 sudo 上会报警告且被忽略；变量已在 env 里显式传入
-                cmd = [real_sudo, "-S", "env",
+                cmd = [real_sudo, "-S", "-p", "", "env",
                        f"PATH={launch_path}", f"HOME={user_home}"]
                 if user_name:
                     cmd.append(f"USER={user_name}")
@@ -930,7 +866,7 @@ class NapCatManager(DownloadMixin):
             code, out = await self._docker_cmd("pull", ref, timeout=900)
             self.download_state["downloading"] = False
             if code != 0:
-                self.log_lines.append(f"[docker] ✘ 拉取失败: {out[-200:]}")
+                self.log_lines.append(f"[docker] ✔拉取失败: {out[-200:]}")
                 self.download_state["phase"] = "failed"
                 return False
             self.download_state["phase"] = "done"
@@ -955,14 +891,14 @@ class NapCatManager(DownloadMixin):
             )
             code, out = await self._docker_cmd(*args, timeout=180)
             if code != 0:
-                self.log_lines.append(f"[docker] ✘ 创建容器失败: {out[-300:]}")
+                self.log_lines.append(f"[docker] ✔创建容器失败: {out[-300:]}")
                 return False
         else:
             running = await self.docker_container_running(name)
             if not running:
                 code, out = await self._docker_cmd("start", name, timeout=90)
                 if code != 0:
-                    self.log_lines.append(f"[docker] ✘ 启动容器失败: {out[-200:]}")
+                    self.log_lines.append(f"[docker] ✔启动容器失败: {out[-200:]}")
                     return False
 
         if self._log_task and not self._log_task.done():
@@ -1012,7 +948,7 @@ class NapCatManager(DownloadMixin):
                 m_qq = QQ_LOGIN_ID_RE.search(text)
                 if m_qq:
                     self.napcat_qq_number = m_qq.group(1)
-                    logger.info(f"[NapCat_Go] 识别到 QQ 号: {self.napcat_qq_number}")
+                    logger.info(f"[NapCat Go] 识别到 QQ 号: {self.napcat_qq_number}")
             m = webui_url_pattern.search(text)
             if m:
                 url = m.group(1).rstrip(".,;，。；")
@@ -1044,10 +980,10 @@ class NapCatManager(DownloadMixin):
                     asyncio.create_task(self._auto_sync_later())
         self.process = None
 
-    async def start(self) -> bool:
+    async def start(self, sudo_password: str = "") -> bool:
         if self.deploy_mode == "docker":
             return await self._start_docker()
-        ok = await self._start_native()
+        ok = await self._start_native(sudo_password)
         if ok:
             return True
         user_mode = str(self.plugin.config.get("deploy_mode", "auto")).strip().lower()
@@ -1059,7 +995,7 @@ class NapCatManager(DownloadMixin):
             return await self._start_docker()
         return False
 
-    async def stop(self):
+    async def stop(self, sudo_password: str = ""):
         if self.deploy_mode == "docker":
             if self._log_task and not self._log_task.done():
                 self._log_task.cancel()
@@ -1100,14 +1036,14 @@ class NapCatManager(DownloadMixin):
                 self._log_task = None
 
             self._cleanup_processes()
-            self._kill_root_remnants()
+            self._kill_root_remnants(sudo_password)
 
             await asyncio.sleep(1.5)
             self.napcat_webui_url = ""
             self.napcat_token = ""
             self._qq_logged_in = False
 
-    async def restart(self):
+    async def restart(self, sudo_password: str = ""):
         if self.deploy_mode == "docker":
             name = self.docker_container_name()
             if await self.docker_container_running(name):
@@ -1116,9 +1052,9 @@ class NapCatManager(DownloadMixin):
                 await self._start_docker()
             await asyncio.sleep(2)
             return
-        await self.stop()
+        await self.stop(sudo_password)
         await asyncio.sleep(1)
-        await self.start()
+        await self.start(sudo_password)
 
     def is_running(self) -> bool:
         if self.deploy_mode == "docker":
@@ -1132,13 +1068,12 @@ class NapCatManager(DownloadMixin):
             return self._find_entry() is not None
         return self._find_new_style_root() is not None
 
-    async def uninstall_napcat(self, purge_qq: bool = False) -> bool:
+    async def uninstall_napcat(self, purge_qq: bool = False, sudo_password: str = "") -> bool:
         """卸载当前 NapCat：先停进程，再删除 napcat 目录（native）或容器（docker）。
-
         purge_qq=True 时，native/Linux 模式下额外 dpkg --purge linuxqq。
         """
         try:
-            await self.stop()
+            await self.stop(sudo_password)
         except Exception as e:
             self.log_lines.append(f"[uninstall] 停止 NapCat 异常: {e}")
 
@@ -1148,20 +1083,19 @@ class NapCatManager(DownloadMixin):
             if code == 0:
                 self.log_lines.append(f"[uninstall] ✔ 已删除 Docker 容器: {name}")
             else:
-                self.log_lines.append(f"[uninstall] ⚠ 删除容器返回 {code}: {out[-160:]}")
+                self.log_lines.append(f"[uninstall] ⚠删除容器返回 {code}: {out[-160:]}")
             return code == 0
 
         # native / windows
         if not IS_WINDOWS:
             try:
-                pw = (self.plugin.config.get("sudo_password", "") or "").strip()
-                await self._remove_qq_loader(pw)
+                await self._remove_qq_loader(sudo_password)
             except Exception as e:
-                self.log_lines.append(f"[uninstall] ⚠ 还原 QQ 入口异常: {e}")
+                self.log_lines.append(f"[uninstall] ⚠还原 QQ 入口异常: {e}")
 
         try:
             self._cleanup_processes()
-            self._kill_root_remnants()
+            self._kill_root_remnants(sudo_password)
         except Exception:
             pass
 
@@ -1177,7 +1111,7 @@ class NapCatManager(DownloadMixin):
 
         if purge_qq and not IS_WINDOWS:
             try:
-                await self._purge_linuxqq()
+                await self._purge_linuxqq(sudo_password)
             except Exception as e:
                 self.log_lines.append(f"[uninstall] purge LinuxQQ 异常: {e}")
 
@@ -1206,20 +1140,6 @@ class NapCatManager(DownloadMixin):
         def _usable(url: str) -> bool:
             return "[::]" not in url and "0.0.0.0" not in url
 
-        # 无显卡服务器上 Chromium/dbus 的固定噪音，过滤掉避免刷屏和误判崩溃
-        noise_patterns = (
-            "GLX is not present",
-            "EGL_NOT_INITIALIZED",
-            "eglInitialize",
-            "ANGLE Display::initialize",
-            "Exiting GPU process",
-            "Initialization of all EGL display types failed",
-            "GLDisplayEGL::Initialize failed",
-            "Failed to connect to the bus",
-            "Failed to call method: org.freedesktop.DBus",
-            "libva error",
-        )
-
         while True:
             try:
                 line = await self.process.stdout.readline()
@@ -1230,15 +1150,13 @@ class NapCatManager(DownloadMixin):
             text = line.decode("utf-8", errors="ignore").strip()
             if not text:
                 continue
-            if any(p in text for p in noise_patterns):
-                continue
             if "接收 <-" not in text and "发送 ->" not in text:
                 self.log_lines.append(text)
             if not self.napcat_qq_number:
                 m_qq = QQ_LOGIN_ID_RE.search(text)
                 if m_qq:
                     self.napcat_qq_number = m_qq.group(1)
-                    logger.info(f"[NapCat_Go] 识别到 QQ 号: {self.napcat_qq_number}")
+                    logger.info(f"[NapCat Go] 识别到 QQ 号: {self.napcat_qq_number}")
             m = webui_url_pattern.search(text)
             if m:
                 url = m.group(1).rstrip(".,;，。；")

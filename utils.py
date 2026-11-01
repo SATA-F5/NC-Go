@@ -17,7 +17,8 @@ from typing import Optional, Dict, Any, Set, List, Tuple
 from astrbot.api import logger
 
 PLUGIN_NAME = "pulid_napcat_go_to_astrbot"
-CONFIG_VERSION = 4
+PLUGIN_VERSION = "7.4.2"
+CONFIG_VERSION = 5
 
 NAPCAT_RELEASE_BASE = "https://github.com/NapNeko/NapCatQQ/releases/download"
 DEFAULT_NAPCAT_VERSION = "latest"
@@ -95,7 +96,9 @@ DOCKER_QQ_DATA_PATH = "/app/.config/QQ"
 DOCKER_WEBUI_PORT = 6099
 
 DEFAULT_CONFIG = {
-    "auto_sync": True, "auto_start": True, "napcat_port": 6099,
+    "auto_sync": True, "auto_start": True, "auto_start_after_install": True,
+    "sudo_password": "",
+    "napcat_port": 6099,
     "napcat_version": DEFAULT_NAPCAT_VERSION,
     "napcat_download_mirror": DEFAULT_DOWNLOAD_MIRROR,
     "napcat_config_dir": "", "astrbot_config_path": "", "qq_number": "",
@@ -103,8 +106,9 @@ DEFAULT_CONFIG = {
     "docker_image": DEFAULT_DOCKER_IMAGE,
     "docker_tag": DEFAULT_DOCKER_TAG,
     "docker_container_name": DEFAULT_DOCKER_CONTAINER,
-    "sudo_password": "",
     "onboarding_done": False,
+    "onboarding_version": 0,
+    "ui_theme": "auto",
 }
 
 CREATE_NO_WINDOW = 0x08000000

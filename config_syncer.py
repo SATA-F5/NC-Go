@@ -16,6 +16,7 @@ from .utils import (
     _mask_token, reverse_ws_host,
     resolve_persistent_dir,
 )
+from . import linux_tools
 
 
 class ConfigSyncer:
@@ -205,7 +206,7 @@ class ConfigSyncer:
                 continue
         return results
 
-    def _pre_sync_chown(self) -> None:
+    def _pre_sync_chown(self, sudo_password: str = "") -> None:
         if IS_WINDOWS:
             return
         if not self.napcat_config_dir:
@@ -218,36 +219,29 @@ class ConfigSyncer:
         if uid == 0:
             return
 
-        env = {**os.environ}
-        pw = (self.plugin.config.get("sudo_password", "") or "").strip()
+        pw = (sudo_password or "").strip()
+        if not pw:
+            pw = str(self.plugin.config.get("sudo_password", "") or "").strip()
         if not pw or not shutil.which("sudo"):
             return
         self.plugin.manager._sudo_warm_sync(pw)
 
-        try:
-            r = subprocess.run(
-                ["sudo", "chown", "-R", f"{uid}:{gid}", str(self.napcat_config_dir)],
-                env=env, capture_output=True, text=True, timeout=30,
-                stdin=subprocess.DEVNULL,
-            )
-            if r.returncode == 0:
-                logger.info(f"[NapCat_Go] pre-sync chown ok: {self.napcat_config_dir}")
-            else:
-                logger.warning(
-                    f"[NapCat_Go] pre-sync chown rc={r.returncode}: "
-                    f"{(r.stderr or '').strip()[:120]}"
-                )
-        except Exception as e:
-            logger.warning(f"[NapCat_Go] pre-sync chown failed: {e}")
+        code, out = linux_tools.run_sudo_sync(
+            self.plugin, ["chown", "-R", f"{uid}:{gid}", str(self.napcat_config_dir)], pw, timeout=30
+        )
+        if code == 0:
+            logger.info(f"[NapCat Go] pre-sync chown ok: {self.napcat_config_dir}")
+        else:
+            logger.warning(f"[NapCat Go] pre-sync chown rc={code}: {str(out or '').strip()[:120]}")
 
         try:
             parent = self.napcat_config_dir.parent
             if parent and parent.exists() and parent != self.napcat_config_dir:
-                env2 = {**os.environ}
-                subprocess.run(
-                    ["sudo", "chown", "-R", f"{uid}:{gid}", str(parent)],
-                    env=env2, timeout=30, stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                linux_tools.run_sudo_sync(
+                    self.plugin,
+                    ["chown", "-R", f"{uid}:{gid}", str(parent)],
+                    pw,
+                    timeout=30,
                 )
         except Exception:
             pass
@@ -258,11 +252,11 @@ class ConfigSyncer:
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 bak = path.with_suffix(path.suffix + f".bak.{ts}")
                 shutil.copy2(path, bak)
-                logger.info(f"[NapCat_Go] 备份 {path.name} -> {bak.name}")
+                logger.info(f"[NapCat Go] 备份 {path.name} -> {bak.name}")
         except Exception as e:
-            logger.warning(f"[NapCat_Go] 备份 {path} 失败: {e}")
+            logger.warning(f"[NapCat Go] 备份 {path} 失败: {e}")
 
-    def sync(self) -> Tuple[bool, str]:
+    def sync(self, sudo_password: str = "") -> Tuple[bool, str]:
         self.refresh()
         if not self.astrbot_config_path:
             return self._fail("AstrBot config cmd_config.json not found")
@@ -273,7 +267,7 @@ class ConfigSyncer:
         if not self.napcat_config_file:
             return self._fail("No onebot11_*.json found")
 
-        self._pre_sync_chown()
+        self._pre_sync_chown(sudo_password)
 
         config: Dict[str, Any]
         if self.napcat_config_file.exists():
@@ -283,7 +277,7 @@ class ConfigSyncer:
                 if not isinstance(config, dict):
                     config = dict(DEFAULT_ONEBOT11_TEMPLATE)
             except Exception as e:
-                logger.warning(f"[NapCat_Go] 解析 {self.napcat_config_file} 失败: {e}，使用默认模板")
+                logger.warning(f"[NapCat Go] 解析 {self.napcat_config_file} 失败: {e}，使用默认模板")
                 config = dict(DEFAULT_ONEBOT11_TEMPLATE)
         else:
             self.napcat_config_dir.mkdir(parents=True, exist_ok=True)
@@ -312,7 +306,7 @@ class ConfigSyncer:
         ws_host = reverse_ws_host(getattr(self.plugin, "deploy_mode", None), bot["host"])
         ws_url = f"ws://{ws_host}:{bot['port']}{bot['path']}"
 
-        # ⚡ 关键修复：一次写全所有 SSL 相关字段，覆盖 NapCat 各版本读取的键名
+        # ⚠关键修复：一次写全所SSL 相关字段，覆NapCat 各版本读取的键名
         network["websocketClients"] = [{
             "enable": True,
             "name": "astrbot",
@@ -323,8 +317,7 @@ class ConfigSyncer:
             "debug": False,
             "heartInterval": 30000,
             "reconnectInterval": 3000,
-            # SSL 关闭（各版本键名兼容）
-            "verifyCertificate": False,   # 新版 NapCat
+            # SSL 关闭（各版本键名兼容            "verifyCertificate": False,   # 新版 NapCat
             "sslVerify": False,            # 旧版 NapCat
             "sslCertVerify": False,        # 兼容
             "ssl": False,                  # 关闭 wss
@@ -343,7 +336,7 @@ class ConfigSyncer:
         self.last_sync_ok = True
         self.last_sync_msg = msg
         self.last_sync_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        logger.info(f"[NapCat_Go] {msg}")
+        logger.info(f"[NapCat Go] {msg}")
         return True, msg
 
     def _fail(self, msg: str) -> Tuple[bool, str]:

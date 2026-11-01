@@ -1,8 +1,8 @@
 """
 astrbot_api.py
 --------------
-AstrBot 自身 HTTP API 的轻量封装。
-用于在 NapCat 反向 WS 配置完成后，自动在 AstrBot 中创建 aiocqhttp 机器人实例。
+AstrBot 自身 HTTP API 的轻量封装
+用于NapCat 反向 WS 配置完成后，自动AstrBot 中创aiocqhttp 机器人实例
 """
 
 from typing import Optional, Dict, Any, List
@@ -12,7 +12,7 @@ from astrbot.api import logger
 
 
 class AstrBotAPI:
-    """AstrBot HTTP API 客户端"""
+    """AstrBot HTTP API 客户端。"""
 
     def __init__(
         self,

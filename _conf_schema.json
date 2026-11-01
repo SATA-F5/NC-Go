@@ -11,6 +11,12 @@
         "default": true,
         "hint": "开启后，检测到 QQ 登录成功时会自动把 AstrBot 的 OneBot v11 机器人配置写入 NapCat 的 onebot11_*.json。"
     },
+    "auto_start_after_install": {
+        "type": "bool",
+        "description": "安装 / 更新完成后自动启动 NapCat",
+        "default": true,
+        "hint": "与 SnowLuma Go 的安装流程一致：下载并安装完成后自动启动 NapCat，无需再手动点一次启动。"
+    },
     "napcat_config_dir": {
         "type": "string",
         "description": "NapCat 配置目录（留空自动探测）",
@@ -64,6 +70,6 @@
         "description": "Linux 本地安装时的 sudo 密码（仅 native 模式用）",
         "default": "",
         "secret": true,
-        "hint": "强烈建议不要在这里填写。请改用插件页面（NapCat_Go 管理器）的「配置」弹窗填写，那里会加密存储。若必须在此填写，保存后请立即清空本字段。"
+        "hint": "建议在插件页面（NapCat Go 管理器）的「配置」弹窗填写，那里会经本机密钥加密后保存。若必须在此填写，保存后建议清空本字段。"
     }
 }

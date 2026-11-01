@@ -1,4 +1,4 @@
-# NapCat_Go
+# NapCat Go
 
  -一键部署与连接 NapCat 到 AstrBot 的插件。
  -现已支持Windows/Linux双版本（Linux具体限制为Napcat安装问题）
@@ -8,6 +8,7 @@
 ## *前置要求*
 
 1. Windows已安装 **QQNT 9.9.27+**，Linux已配置好sudo密码（需要用到apt）
+   - Linux native 模式可在插件页面「配置 → 运行方式」保存 sudo 密码，之后启动、安装、同步会自动提权，不再每次弹窗
 2. Python 环境（AstrBot 自带），已安装 `aiohttp`
 3. **已经创建好机器人了**
 
@@ -15,7 +16,7 @@
 
 1. 在 AstrBot 插件市场安装本插件，或手动放入 `data/plugins/`
 2. 重载插件
-3. 打开 WebUI → 插件 → NapCat_Go → 打开页面
+3. 打开 WebUI → 插件 → NapCat Go → 打开页面
 
 ## 首次使用
 

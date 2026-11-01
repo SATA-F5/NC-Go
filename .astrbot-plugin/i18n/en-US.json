@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "display_name": "NapCat Go",
+    "short_desc": "Deploy NapCat and wire it into AstrBot in one click",
+    "desc": "Automates NapCat installation, startup, QQ login and reverse WebSocket configuration for AstrBot."
+  },
+  "pages": {
+    "napcat_go": {
+      "title": "NapCat Go",
+      "description": "Install, start and configure NapCat for AstrBot"
+    }
+  },
+  "views": {
+    "napcat_go": {
+      "title": "NapCat Go",
+      "description": "Install, start and configure NapCat for AstrBot"
+    }
+  }
+}

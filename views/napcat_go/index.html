@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark light">
+    <title>NapCat Go 管理器</title>
+    <script>
+        // Apply a pinned theme before first paint to avoid a light/dark flash.
+        // "auto" follows AstrBot and is resolved by bridge.js once the host
+        // context is available.
+        (function () {
+            try {
+                var saved = localStorage.getItem("napcat_go_theme_v2") || "auto";
+                if (saved === "light" || saved === "dark") {
+                    document.documentElement.setAttribute("data-theme", saved);
+                }
+            } catch (e) { /* sandboxed iframe */ }
+        })();
+    </script>
+    <link rel="stylesheet" href="style.css?v=742-12">
+    <link rel="stylesheet" href="extra.css?v=742-12">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h2>NapCat Go 管理器</h2>
+                <div class="subtitle" id="subtitle">加载中...</div>
+            </div>
+            <button class="btn" id="btn-open-config">配置</button>
+        </div>
+
+        <div class="main-layout">
+            <div class="left-column">
+                <div class="big-buttons">
+                    <button class="big-btn power-on" id="btn-toggle-power">
+                        <span id="power-label">启动 NapCat</span>
+                    </button>
+                    <button class="big-btn sync" id="btn-sync">立即同步</button>
+                    <button class="big-btn webui" id="btn-open-webui">打开 WebUI</button>
+                </div>
+
+                <div class="guide" id="guide"></div>
+
+                <div class="download-panel" id="download-panel">
+                    <div class="dl-header">
+                        <div class="dl-title" id="dl-title-text">正在下载 NapCat.Shell.zip</div>
+                        <div class="dl-mirror" id="dl-mirror"></div>
+                    </div>
+                    <div class="dl-progress-bar">
+                        <div class="dl-progress-fill" id="dl-progress-fill"></div>
+                    </div>
+                    <div class="dl-info">
+                        <span class="dl-percent" id="dl-percent">0%</span>
+                        <span class="dl-size" id="dl-size"></span>
+                        <span class="dl-speed" id="dl-speed"></span>
+                    </div>
+                </div>
+
+                <div class="status-section-title">运行状态</div>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <div class="label">NapCat</div>
+                        <div class="value" id="s-run">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">QQ 版本</div>
+                        <div class="value" id="s-version">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">部署方式</div>
+                        <div class="value" id="s-mode">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">WebUI</div>
+                        <div class="value mono-small" id="s-webui">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">登录状态</div>
+                        <div class="value" id="s-login">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">QQ 账号</div>
+                        <div class="value" id="s-uin">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">AstrBot 机器人</div>
+                        <div class="value" id="s-bot">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">反向 WS 端口</div>
+                        <div class="value" id="s-bot-port">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">NapCat 端口</div>
+                        <div class="value" id="s-port">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">WebUI Token</div>
+                        <div class="value mono-small" id="s-token">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">上次同步</div>
+                        <div class="value" id="s-sync">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">插件版本</div>
+                        <div class="value" id="s-plugin">-</div>
+                    </div>
+                    <div class="status-item full">
+                        <div class="label">NapCat 配置目录</div>
+                        <div class="value" id="s-napcat-dir">-</div>
+                    </div>
+                    <div class="status-item full">
+                        <div class="label">AstrBot 配置</div>
+                        <div class="value" id="s-astrbot-path">-</div>
+                    </div>
+                </div>
+
+                <div class="status-section-title">QQ 进程</div>
+                <div class="proc-list" id="qq-process-list">
+                    <div class="empty-box">暂无 QQ 进程信息</div>
+                </div>
+
+                <div class="status-section-title">在线账号</div>
+                <div class="proc-list" id="account-list">
+                    <div class="empty-box">正在读取账号...</div>
+                </div>
+
+                <div class="aux-buttons" id="main-actions">
+                    <button class="btn" id="btn-restart">重启 NapCat</button>
+                    <button class="btn" id="btn-cleanup">清理残留</button>
+                    <button class="btn" id="btn-refresh">重新探测</button>
+                </div>
+            </div>
+
+            <div class="right-column">
+                <div class="log-section">
+                    <div class="log-header">
+                        <span>NapCat 实时日志</span>
+                        <div class="log-tools">
+                            <label class="log-pause"><input type="checkbox" id="log-pause"> 暂停</label>
+                            <span id="log-count" class="log-count"></span>
+                            <button class="btn btn-sm" id="btn-clear-log">清屏</button>
+                        </div>
+                    </div>
+                    <div class="log-container" id="log-container"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="config-modal">
+        <div class="modal-content wide">
+            <h3>插件配置</h3>
+
+            <div class="form-section">
+                <div class="form-section-title">运行方式</div>
+                <div class="form-group">
+                    <label>部署方式</label>
+                    <select id="cfg-deploy">
+                        <option value="auto">auto（自动）</option>
+                        <option value="windows">windows（Windows 原生）</option>
+                        <option value="docker">docker（容器化）</option>
+                        <option value="native">native（Linux 本地安装）</option>
+                    </select>
+                    <div class="form-hint">
+                        Linux 推荐 <code>docker</code>；<code>native</code> 会安装 LinuxQQ 并用官方 loadNapCat.js 注入，需要在下方保存 sudo 密码以便自动提权。
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Docker 镜像 / 标签 / 容器名</label>
+                    <div class="triple-row">
+                        <input type="text" id="cfg-docker-image" placeholder="mlikiowa/napcat-docker">
+                        <input type="text" id="cfg-docker-tag" placeholder="latest">
+                        <input type="text" id="cfg-docker-container" placeholder="napcat-go">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>NapCat WebUI 端口</label>
+                    <input type="number" id="cfg-napcat-port" min="1" max="65535" placeholder="6099">
+                    <div class="form-hint">默认 <code>6099</code>。修改后会写入 NapCat 的 <code>webui.json</code>，重启 NapCat 后生效。</div>
+                </div>
+                <div class="form-group">
+                    <label>sudo 密码（仅 Linux 本地安装用）</label>
+                    <input type="password" id="cfg-sudo-password" placeholder="留空则不自动提权" autocomplete="off" spellcheck="false">
+                    <div class="form-hint">
+                        native 模式安装依赖、注入 QQ 需要 sudo。填写一次后经本机密钥加密保存，
+                        之后启动 / 安装 / 同步会自动提权，不再弹窗。留空表示不修改已保存的密码。
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-title">账号与 AstrBot</div>
+                <div class="form-group">
+                    <label>机器人 QQ 号（可选）</label>
+                    <input type="text" id="cfg-qq-number" placeholder="留空自动识别 / 扫码登录">
+                </div>
+                <div class="form-group">
+                    <label>NapCat 配置目录</label>
+                    <input type="text" id="cfg-napcat-dir" placeholder="留空自动探测">
+                    <div class="form-hint">
+                        该目录里应包含 <code>onebot11_*.json</code>。优先级：手动填写 &gt; 插件目录 &gt; 系统默认。
+                    </div>
+                    <button class="btn btn-sm" id="btn-scan" style="margin-top:6px;">扫描本机候选路径</button>
+                    <div id="scan-results" class="scan-results"></div>
+                </div>
+                <div class="form-group">
+                    <label>AstrBot 配置文件路径</label>
+                    <input type="text" id="cfg-astrbot-path" placeholder="留空自动探测，通常是 data/cmd_config.json">
+                </div>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-title">界面</div>
+                <div class="switch-line theme-line">
+                    <span>浅色模式</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="cfg-light-mode" aria-label="浅色模式">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="form-hint">
+                    默认跟随 AstrBot 主题；拨动后固定为所选主题。
+                    <a href="#" id="link-follow-theme" style="display:none;">恢复跟随</a>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-title">自动化</div>
+                <label class="switch-line"><span>插件加载后自动启动（需已安装）</span><input type="checkbox" id="cfg-auto-start"></label>
+                <label class="switch-line"><span>安装 / 更新完成后自动启动</span><input type="checkbox" id="cfg-auto-start-after-install"></label>
+                <label class="switch-line"><span>QQ 登录后自动同步 OneBot 配置</span><input type="checkbox" id="cfg-auto-sync"></label>
+                <div class="form-hint">Linux native 下请先在「运行方式」保存 sudo 密码；保存后启动、安装和同步会自动提权，不再弹窗。安装完成后会自动启动一次（可关闭）。</div>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-title">维护与帮助</div>
+                <div class="aux-buttons">
+                    <button class="btn btn-primary" id="btn-open-download">下载与安装</button>
+                    <button class="btn" id="btn-install-deps">安装 Linux 依赖</button>
+                    <button class="btn" id="btn-replay-guide">使用引导</button>
+                </div>
+                <div class="form-hint">
+                    Linux 依赖包含 xvfb / x11vnc / openbox / dbus 等；安装、版本选择与镜像在「下载与安装」里。
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button class="btn" id="btn-config-cancel">取消</button>
+                <button class="btn btn-primary" id="btn-config-save">保存配置</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="download-modal">
+        <div class="modal-content download-content">
+            <h3>下载与安装 NapCat</h3>
+            <div class="mini-note" id="dl-current" style="margin-bottom:14px;"></div>
+
+            <div class="form-section">
+                <div class="form-section-title">下载源</div>
+                <div class="form-group">
+                    <label>GitHub 下载镜像（选择后立即生效）</label>
+                    <div class="mirror-picker" id="dl-mirror-picker">
+                        <input type="text" id="dl-mirror-input" placeholder="https://gh.zwy.one/" autocomplete="off" spellcheck="false">
+                        <button class="mirror-toggle" type="button" id="dl-mirror-toggle" aria-label="选择下载镜像" aria-expanded="false">
+                            <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+                            </svg>
+                        </button>
+                        <div class="mirror-menu" id="dl-mirror-menu" role="listbox" aria-label="下载镜像列表"></div>
+                    </div>
+                    <div class="form-hint">
+                        可直接输入自定义前缀，或点击右侧箭头选择内置镜像。选择后无需保存，下一次下载立即使用。
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-title">版本</div>
+                <div class="form-group">
+                    <label>NapCat 版本</label>
+                    <select id="dl-version" class="ver-select">
+                        <option value="latest">latest（最新版）</option>
+                    </select>
+                </div>
+                <div class="form-hint">
+                    安装会替换程序文件，但保留 <code>config/</code> 用户数据；运行中安装会被拒绝。
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button class="btn" id="btn-dl-close" type="button">关闭</button>
+                <button class="btn btn-danger" id="btn-dl-uninstall" type="button">卸载</button>
+                <button class="btn btn-primary" id="btn-dl-install" type="button">安装 / 更新</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="webui-modal">
+        <div class="modal-content wide">
+            <h3>打开 NapCat WebUI</h3>
+            <div class="mini-note" id="webui-ip-hint" style="margin-bottom:12px;">
+                地址已按当前访问的 IP 自动适配；远程访问 AstrBot 时不会再指向 127.0.0.1。
+            </div>
+            <div class="form-group">
+                <label>WebUI 地址</label>
+                <div class="copy-row">
+                    <input type="text" id="webui-url-field" readonly>
+                    <button class="btn btn-sm" id="btn-copy-webui-url" type="button">复制</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>WebUI Token</label>
+                <div class="copy-row">
+                    <input type="text" id="webui-token-field" readonly>
+                    <button class="btn btn-sm" id="btn-copy-webui-token" type="button">复制</button>
+                </div>
+                <div class="form-hint">
+                    Token 由 NapCat 自动生成，打开 WebUI 时地址里会自动带上。
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="btn" id="btn-close-webui">关闭</button>
+                <a class="btn btn-primary" id="webui-open-link" target="_blank" rel="noopener noreferrer">在新页面打开</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="sudo-modal">
+        <div class="modal-content">
+            <h3>需要 sudo 密码</h3>
+            <div class="mini-note" id="sudo-reason" style="margin-bottom:12px;"></div>
+            <div class="form-group">
+                <label>sudo 密码</label>
+                <input type="password" id="sudo-password-input" autocomplete="off" spellcheck="false" placeholder="输入 Linux 用户密码">
+                <div class="form-hint">
+                    仅本次操作使用：浏览器用 RSA 公钥加密后发送，后台私钥解密，用完即弃，不会写入配置、磁盘或日志。
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="btn" id="btn-sudo-cancel" type="button">取消</button>
+                <button class="btn btn-primary" id="btn-sudo-ok" type="button">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="onboarding">
+        <div class="ob-backdrop"></div>
+        <div class="ob-spotlight" id="ob-spotlight"></div>
+        <div class="ob-card" id="ob-card"></div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <div class="confirm-mask" id="confirm-mask">
+        <div class="confirm-box">
+            <div class="confirm-msg" id="confirm-msg"></div>
+            <div class="confirm-btns">
+                <button class="btn" id="confirm-cancel">取消</button>
+                <button class="btn btn-primary" id="confirm-ok">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="bridge.js?v=742-12"></script>
+</body>
+</html>

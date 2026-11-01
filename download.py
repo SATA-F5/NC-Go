@@ -14,8 +14,7 @@ import aiohttp
 from astrbot.api import logger
 
 from .utils import (
-    IS_WINDOWS, IS_LINUX,
-    NAPCAT_RELEASE_BASE,
+    IS_WINDOWS, IS_LINUX,    NAPCAT_RELEASE_BASE,
     DEFAULT_NAPCAT_VERSION,
     NAPCAT_MIRROR_CANDIDATES,
     LINUXQQ_DEB_URLS,
@@ -29,12 +28,12 @@ from .utils import (
     LINUX_RUNTIME_DEPS,
 )
 
+from . import linux_tools
+
 
 class DownloadMixin:
-    """提供 NapCat / LinuxQQ 的下载与安装能力。
-
-    依赖宿主类的以下属性/方法：
-    - self.plugin            : NapCatGoPlugin
+    """提供 NapCat / LinuxQQ 的下载与安装能力
+    依赖宿主类的以下属方法    - self.plugin            : NapCatGoPlugin
     - self.napcat_dir        : Path
     - self.plugin_dir        : Path
     - self.log_lines         : deque
@@ -100,7 +99,7 @@ class DownloadMixin:
         except Exception:
             return False
 
-    # ---------- 版本解析与完整性校验 ----------
+    # ---------- 版本解析与完整性校----------
 
     @staticmethod
     def _sha256_file(path: Path) -> str:
@@ -113,10 +112,9 @@ class DownloadMixin:
 
     async def _resolve_napcat_release(self, version: str) -> Dict[str, Any]:
         """通过 GitHub API 解析 NapCat 版本，返回 {tag, zip_url, sha256}。
-
-        - version == "latest"：查 /releases/latest 取 tag_name。
+        - version == "latest"：查 /releases/latest 拿 tag_name。
         - 否则按指定 tag 查 /releases/tags/<tag>。
-        - 同时在 release assets 里找 .sha256 / SHA256SUMS 文件，作为校验基准。
+        - 同时从 release assets 里找 .sha256 / SHA256SUMS 文件，作为校验基准。
         - API 不可达时回退到 releases/latest/download/ 直链（无 sha256 基准）。
         """
         result: Dict[str, Any] = {"tag": version, "zip_url": "", "sha256": None}
@@ -140,7 +138,7 @@ class DownloadMixin:
                         raise RuntimeError(f"GitHub API HTTP {resp.status}")
                     data = await resp.json()
         except Exception as e:
-            self.log_lines.append(f"[download] ⚠ GitHub API 解析版本失败({e})，回退 latest 直链")
+            self.log_lines.append(f"[download] ⚠GitHub API 解析版本失败({e})，回退 latest 直链")
             result["tag"] = "latest"
             result["zip_url"] = f"https://github.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.zip"
             return result
@@ -149,7 +147,7 @@ class DownloadMixin:
         result["tag"] = tag
         result["zip_url"] = f"https://github.com/NapNeko/NapCatQQ/releases/download/{tag}/NapCat.Shell.zip"
 
-        # 在 assets 里找 checksum
+        # assets 里找 checksum
         assets = data.get("assets") or []
         checksum_url = None
         for a in assets:
@@ -183,8 +181,7 @@ class DownloadMixin:
         return result
 
     async def list_napcat_releases(self) -> List[Dict[str, Any]]:
-        """通过 GitHub API 列出 NapCat 可下载版本（最近 40 条）。
-
+        """通过 GitHub API 列出 NapCat 可下载版本（最多 30 条）。
         返回 [{tag, name, published_at, prerelease}, ...]，失败返回空列表。
         """
         api_base = "https://api.github.com/repos/NapNeko/NapCatQQ"
@@ -193,7 +190,7 @@ class DownloadMixin:
             connector = aiohttp.TCPConnector(ssl=ssl_ctx)
             async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.get(
-                    f"{api_base}/releases?per_page=40",
+                    f"{api_base}/releases?per_page=30",
                     timeout=aiohttp.ClientTimeout(total=20, sock_connect=8),
                     headers={"Accept": "application/vnd.github+json",
                              "User-Agent": "napcat-go-plugin"},
@@ -221,9 +218,9 @@ class DownloadMixin:
             })
         return out
 
-    # ---------- NapCat 下载 / 解压（Windows + Linux 共用） ----------
+    # ---------- NapCat 下载 / 解压（Windows + Linux 共用----------
 
-    # 与官方 NapCat-Installer/script/install.sh 对齐：用 xvfb-run 起虚拟屏
+    # 与官NapCat-Installer/script/install.sh 对齐：用 xvfb-run 起虚拟屏
     LAUNCHER_SH_CONTENT = """#!/bin/bash
 # napcat-go launcher v3
 exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disable-gpu-compositing --disable-dev-shm-usage
@@ -248,7 +245,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                 launcher.chmod(0o755)
                 self.log_lines.append(f"[download] ✔ 已生成 launcher.sh: {launcher}")
         except Exception as e:
-            self.log_lines.append(f"[download] ✘ 生成 launcher.sh 失败: {e}")
+            self.log_lines.append(f"[download] ✔生成 launcher.sh 失败: {e}")
             return False
         return True
 
@@ -258,11 +255,10 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
             with zipfile.ZipFile(archive_path, "r") as zf:
                 zf.extractall(self.napcat_dir)
 
-            # 官方 zip 的 package.json 保持原样；NapCat 入口由 QQ 侧的
-            # loadNapCat.js 通过绝对 file:// URL 导入，不再需要改这里的 type。
-            if not IS_WINDOWS:
+            # 官方 zip package.json 保持原样；NapCat 入口QQ 侧的
+            # loadNapCat.js 通过绝对 file:// URL 导入，不再需要改这里type            if not IS_WINDOWS:
                 if not (self.napcat_dir / "napcat.mjs").exists():
-                    self.log_lines.append("[download] ✘ 压缩包内缺少 napcat.mjs")
+                    self.log_lines.append("[download] ✔压缩包内缺少 napcat.mjs")
                     return False
 
             if not IS_WINDOWS:
@@ -311,7 +307,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                     else:
                         child.unlink()
                 except Exception as e:
-                    self.log_lines.append(f"[download] ⚠ 清理 {child.name} 失败: {e}")
+                    self.log_lines.append(f"[download] ⚠清理 {child.name} 失败: {e}")
             self.log_lines.append("[download] ✔ 已清理旧版本文件（保留 config 目录）")
         except Exception as e:
             self.log_lines.append(f"[download] ⚠ 清理旧版本异常: {e}")
@@ -330,14 +326,13 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
         try:
             self.napcat_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            self.log_lines.append(f"[download] ✘ 无法创建目录 {self.napcat_dir}: {e}")
+            self.log_lines.append(f"[download] ✔无法创建目录 {self.napcat_dir}: {e}")
             self._downloading = False
             self.download_state["downloading"] = False
             self.download_state["phase"] = "failed"
             return False
 
-        # 安装新版本前清理旧文件（保留 config 配置目录）
-        self._clean_old_napcat_install()
+        # 安装新版本前清理旧文件（保留 config 配置目录        self._clean_old_napcat_install()
 
         try:
             if version and str(version).strip():
@@ -376,7 +371,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                         self.log_lines.append("[download] ✘ 本地压缩包解压失败")
                     return ok
 
-            # 自动解析版本（"latest" -> GitHub API），并获取官方 SHA256 基准
+            # 自动解析版本latest" -> GitHub API），并获取官SHA256 基准
             self.log_lines.append(f"[download] 解析目标版本: {version}")
             rel = await self._resolve_napcat_release(version)
             tag = rel.get("tag") or version
@@ -408,8 +403,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                 self.log_lines.append(f"[download] [{idx}/{len(urls)}] 尝试: {label}")
                 self.download_state["current_mirror"] = label
                 self.download_state["current_index"] = idx
-                # 官方源一律严格 TLS；镜像源放开 TLS（但仍受 SHA256 校验兜底）
-                ssl_ctx = make_ssl_context(strict=(label == "official"))
+                # 官方源一律严TLS；镜像源放开 TLS（但仍受 SHA256 校验兜底                ssl_ctx = make_ssl_context(strict=(label == "official"))
                 connector = aiohttp.TCPConnector(ssl=ssl_ctx)
                 session = aiohttp.ClientSession(connector=connector)
                 try:
@@ -447,7 +441,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                         actual_sha = self._sha256_file(download_path)
                         if actual_sha != expected_sha:
                             self.log_lines.append(
-                                f"[download] [{idx}/{len(urls)}] ✘ SHA256 不匹配（来源 {label}），疑似被篡改，丢弃"
+                                f"[download] [{idx}/{len(urls)}] ✔SHA256 不匹配（来源 {label}），疑似被篡改，丢弃"
                             )
                             try:
                                 download_path.unlink()
@@ -500,7 +494,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                         pass
                     continue
 
-            self.log_lines.append("[download] ✘ 所有镜像均失败")
+            self.log_lines.append("[download] ✔所有镜像均失败")
             self.download_state["phase"] = "failed"
             return False
         finally:
@@ -510,7 +504,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
     # ---------- LinuxQQ ----------
 
     def _build_linuxqq_candidate_urls(self) -> List[Tuple[str, str]]:
-        """QQ deb 候选源：先套用户配置+内置加速镜像，最后回退 GitHub 直链。"""
+        """QQ deb 候选源：先套用户配置和内置加速镜像，最后回退 GitHub 直链。"""
         candidates: List[Tuple[str, str]] = []
         seen = set()
 
@@ -536,63 +530,45 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                 add(raw, "qq-cdn")
         return candidates
 
-    async def _purge_linuxqq(self) -> None:
-        pw = (self.plugin.config.get("sudo_password", "") or "").strip()
+    async def _purge_linuxqq(self, pw: str = "") -> None:
         if not pw or not shutil.which("sudo"):
             return
-        env = {**os.environ}
         await self._sudo_warm_async(pw)
-        try:
-            for args in (["dpkg", "-r", "linuxqq"], ["dpkg", "--purge", "linuxqq"]):
-                self.log_lines.append(f"[qq-compat] 执行: sudo {' '.join(args)}")
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        "sudo", *args,
-                        stdin=asyncio.subprocess.DEVNULL,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.STDOUT,
-                        env=env,
-                    )
-                    try:
-                        out, _ = await asyncio.wait_for(proc.communicate(), timeout=180)
-                        text = (out or b"").decode("utf-8", errors="ignore")
-                        for ln in text.splitlines()[-5:]:
-                            if ln.strip():
-                                self.log_lines.append(f"[qq-compat] {ln.strip()}")
-                    except asyncio.TimeoutError:
-                        try:
-                            proc.kill()
-                        except Exception:
-                            pass
-                        self.log_lines.append("[qq-compat] ⚠ dpkg 卸载超时")
-                except Exception as e:
-                    self.log_lines.append(f"[qq-compat] ⚠ dpkg 卸载异常: {e}")
-        finally:
-            pass
+        for args in (["dpkg", "-r", "linuxqq"], ["dpkg", "--purge", "linuxqq"]):
+            self.log_lines.append(f"[qq-compat] 执行: sudo {' '.join(args)}")
+            try:
+                code, text = await linux_tools.run_sudo(self.plugin, args, pw, timeout=180)
+                for ln in (text or "").splitlines()[-5:]:
+                    if ln.strip():
+                        self.log_lines.append(f"[qq-compat] {ln.strip()}")
+                if code != 0:
+                    self.log_lines.append(f"[qq-compat] ⚠ 返回码 {code}")
+            except Exception as e:
+                self.log_lines.append(f"[qq-compat] ⚠dpkg 卸载异常: {e}")
 
-    async def ensure_linux_qq_compatible(self) -> bool:
+    async def ensure_linux_qq_compatible(self, pw: str = "") -> bool:
         cur_ver = get_linux_qq_version()
         cur_code = get_linux_qq_build_code()
 
         if is_qq_installed() and is_linux_qq_version_compatible():
             self.log_lines.append(
-                f"[qq-compat] ✔ 当前 QQ {cur_ver} (build {cur_code}) "
+                f"[qq-compat] ✔当前 QQ {cur_ver} (build {cur_code}) "
                 f"在支持范围 [{NAPCAT_SUPPORTED_QQ_MIN}, {NAPCAT_SUPPORTED_QQ_MAX}] 内，跳过"
             )
             return True
 
         if is_qq_installed():
             self.log_lines.append(
-                f"[qq-compat] ⚠ 当前 QQ {cur_ver} (build {cur_code}) 不兼容："
-                f"PacketBackend 要求 build ∈ [{NAPCAT_SUPPORTED_QQ_MIN}, {NAPCAT_SUPPORTED_QQ_MAX}]"
+                f"[qq-compat] ⚠当前 QQ {cur_ver} (build {cur_code}) 不兼容："
+                f"PacketBackend 要求 build ∈[{NAPCAT_SUPPORTED_QQ_MIN}, {NAPCAT_SUPPORTED_QQ_MAX}]"
             )
             self.log_lines.append(
                 f"[qq-compat] 将自动卸载并安装推荐版本 {RECOMMENDED_LINUXQQ_VERSION}"
             )
-            await self._purge_linuxqq()
+            await self._purge_linuxqq(pw)
             if is_qq_installed():
                 self.log_lines.append(
-                    "[qq-compat] ⚠ purge 后仍检测到 QQ，可能卸载失败，继续尝试安装"
+                    "[qq-compat] ⚠purge 后仍检测到 QQ，可能卸载失败，继续尝试安装"
                 )
         else:
             self.log_lines.append("[qq-compat] 未检测到 LinuxQQ，准备安装推荐版本 ...")
@@ -605,7 +581,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
             except Exception:
                 pass
 
-        ok = await self.ensure_linux_qq()
+        ok = await self.ensure_linux_qq(pw)
         if not ok:
             return False
 
@@ -613,7 +589,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
         new_code = get_linux_qq_build_code()
         if is_linux_qq_version_compatible():
             self.log_lines.append(
-                f"[qq-compat] ✔ 安装完成，当前 QQ {new_ver} (build {new_code}) 已兼容"
+            f"[qq-compat] ✔ 安装完成，当前 QQ {new_ver} (build {new_code}) 已兼容"
             )
             return True
         self.log_lines.append(
@@ -623,27 +599,21 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
         )
         return False
 
-    async def ensure_linux_qq(self) -> bool:
+    async def ensure_linux_qq(self, pw: str = "") -> bool:
         if is_qq_installed():
-            self.log_lines.append("[qq-install] ✔ LinuxQQ 已安装，跳过")
+            self.log_lines.append("[qq-install] ✔LinuxQQ 已安装，跳过")
             return True
 
         self.log_lines.append(
             f"[qq-install] 开始安装 LinuxQQ（目标版本 {RECOMMENDED_LINUXQQ_VERSION}）..."
         )
 
-        pw = (self.plugin.config.get("sudo_password", "") or "").strip()
         if not pw:
-            self.log_lines.append("[qq-install] ✘ 未配置 sudo 密码，无法安装 QQ")
+            self.log_lines.append("[qq-install] ✘ 未提供 sudo 密码，无法安装 QQ")
             return False
         if not shutil.which("sudo"):
             self.log_lines.append("[qq-install] ✘ 系统无 sudo 命令")
             return False
-
-        env_base = {
-            **os.environ, "TERM": "dumb", "NO_COLOR": "1",
-            "DEBIAN_FRONTEND": "noninteractive",
-        }
 
         deb_path = self.napcat_dir / "linuxqq.deb"
         downloaded = False
@@ -659,7 +629,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                 if ok_build:
                     deb_path = m
                     self.log_lines.append(
-                        f"[qq-install] ✔ 使用本地 deb: {deb_path} "
+                        f"[qq-install] ✔使用本地 deb: {deb_path} "
                         f"(version={ver_str}, build={build_code})"
                     )
                     downloaded = True
@@ -702,7 +672,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                 if not ok:
                     continue
                 if not deb_path.exists() or deb_path.stat().st_size < 1024:
-                    self.log_lines.append(f"[qq-install] [{idx}/{total_urls}] ✘ 文件过小")
+                    self.log_lines.append(f"[qq-install] [{idx}/{total_urls}] ✔文件过小")
                     continue
                 if not await self._validate_deb(deb_path):
                     self.log_lines.append(f"[qq-install] [{idx}/{total_urls}] ✘ 不是有效 deb，换下一个")
@@ -720,7 +690,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                         )
                     else:
                         self.log_lines.append(
-                            f"[qq-install] [{idx}/{total_urls}] ✘ deb 内 build 不兼容，"
+                            f"[qq-install] [{idx}/{total_urls}] ✘ deb 的 build 不兼容，"
                             f"跳过: version={ver_str} build={build_code}"
                         )
                     try:
@@ -731,7 +701,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
 
                 size_mb = deb_path.stat().st_size / 1024 / 1024
                 self.log_lines.append(
-                    f"[qq-install] [{idx}/{total_urls}] ✔ 下载成功 "
+                    f"[qq-install] [{idx}/{total_urls}] ✔下载成功 "
                     f"({size_mb:.1f} MB, version={ver_str}, build={build_code})"
                 )
                 downloaded = True
@@ -747,7 +717,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                 + str(self.napcat_dir)
             )
             self.log_lines.append("[qq-install] 手动下载地址（浏览器打开，任选其一）：")
-            self.log_lines.append("[qq-install]   https://github.com/SATA-F5/NC-Go/releases")
+            self.log_lines.append("[qq-install]   https://github.com/SATA-F5/NC_Go/releases")
             self.log_lines.append("[qq-install]   https://github.com/Rodert/qq-versions/releases")
             self.download_state["phase"] = "failed"
             self.download_state["message"] = "LinuxQQ 下载失败"
@@ -758,79 +728,40 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
         self.download_state["current_mirror"] = "安装 LinuxQQ"
         self.download_state["percent"] = 0
 
-        env = dict(env_base)
         if not await self._sudo_warm_async(pw):
-            self.log_lines.append("[qq-install] ✘ sudo 密码验证失败")
+            self.log_lines.append("[qq-install] ✔sudo 密码验证失败")
             self.download_state["phase"] = "failed"
             return False
 
         try:
             self.log_lines.append("[qq-install] 执行: sudo apt-get update")
-            proc = await asyncio.create_subprocess_exec(
-                "sudo", "apt-get", "update",
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
-            )
-            try:
-                await asyncio.wait_for(proc.communicate(), timeout=300)
-            except asyncio.TimeoutError:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+            await linux_tools.run_sudo(self.plugin, ["apt-get", "update"], pw, timeout=300)
 
             self.log_lines.append(f"[qq-install] 执行: sudo dpkg -i {deb_path.name}")
-            proc = await asyncio.create_subprocess_exec(
-                "sudo", "dpkg", "-i", str(deb_path),
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
+            dpkg_rc, text = await linux_tools.run_sudo(
+                self.plugin, ["dpkg", "-i", str(deb_path)], pw, timeout=300
             )
-            try:
-                out, _ = await asyncio.wait_for(proc.communicate(), timeout=300)
-            except asyncio.TimeoutError:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                self.log_lines.append("[qq-install] ✘ dpkg 安装超时")
-                self.download_state["phase"] = "failed"
-                self.download_state["message"] = "dpkg 超时"
-                return False
-
-            dpkg_rc = proc.returncode or 0
-            text = (out or b"").decode("utf-8", errors="ignore")
-            for ln in text.splitlines()[-8:]:
+            for ln in (text or "").splitlines()[-8:]:
                 if ln.strip():
                     self.log_lines.append(f"[qq-install] {ln.strip()}")
 
             if dpkg_rc != 0:
                 self.log_lines.append("[qq-install] dpkg 返回非 0，执行 apt-get -f install -y 补依赖 ...")
-                proc = await asyncio.create_subprocess_exec(
-                    "sudo", "apt-get", "-f", "install", "-y",
-                    stdin=asyncio.subprocess.DEVNULL,
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
+                rc2, text = await linux_tools.run_sudo(
+                    self.plugin, ["env", "DEBIAN_FRONTEND=noninteractive",
+                                  "apt-get", "-f", "install", "-y"], pw, timeout=600
                 )
-                try:
-                    out, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
-                except asyncio.TimeoutError:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-                    self.log_lines.append("[qq-install] ✘ apt-get -f install 超时")
-                    self.download_state["phase"] = "failed"
-                    self.download_state["message"] = "apt-get 超时"
-                    return False
-                text = (out or b"").decode("utf-8", errors="ignore")
-                for ln in text.splitlines()[-8:]:
+                for ln in (text or "").splitlines()[-8:]:
                     if ln.strip():
                         self.log_lines.append(f"[qq-install] {ln.strip()}")
+                if rc2 != 0:
+                    self.log_lines.append("[qq-install] ⚠ apt-get -f install 未成功，继续检测安装结果")
 
             if is_qq_installed():
                 installed_ver = get_linux_qq_version()
                 installed_code = get_linux_qq_build_code()
                 self.log_lines.append(
-                    f"[qq-install] ✔ LinuxQQ 安装成功: {installed_ver} (build {installed_code})"
+                    f"[qq-install] ✔LinuxQQ 安装成功: {installed_ver} (build {installed_code})"
                 )
                 try:
                     deb_path.unlink()
@@ -843,7 +774,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                 self.download_state["message"] = "LinuxQQ 已安装"
                 return True
             else:
-                self.log_lines.append("[qq-install] ✘ 安装后仍未检测到 /opt/QQ/qq")
+                self.log_lines.append("[qq-install] ✔安装后仍未检测到 /opt/QQ/qq")
                 self.download_state["phase"] = "failed"
                 self.download_state["downloading"] = False
                 self.download_state["message"] = "LinuxQQ 安装失败"
@@ -851,7 +782,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
         finally:
             pass
 
-    # ---------- Linux 本地安装（不再下载 install.sh） ----------
+    # ---------- Linux 本地安装（不再下install.sh----------
 
     async def _backup_inner_napcat_if_needed(self) -> bool:
         inner = self.napcat_dir / "napcat"
@@ -873,29 +804,32 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
         try:
             shutil.move(str(inner), str(bak))
             self.log_lines.append(
-                f"[install] ⚠ 检测到 {inner} 已存在且不为空，已备份为 {bak.name}"
+                f"[install] ⚠检测到 {inner} 已存在且不为空，已备份为 {bak.name}"
             )
             return True
         except Exception as e:
-            self.log_lines.append(f"[install] ⚠ 备份 {inner} 失败: {e}")
+            self.log_lines.append(f"[install] ⚠备份 {inner} 失败: {e}")
             try:
                 shutil.rmtree(inner)
                 self.log_lines.append(f"[install] ✔ 已删除 {inner}")
                 return True
             except Exception as e2:
-                self.log_lines.append(f"[install] ✘ 删除 {inner} 也失败: {e2}")
+                self.log_lines.append(f"[install] ✔删除 {inner} 也失败: {e2}")
                 self.log_lines.append("[install] 请手动执行：")
                 self.log_lines.append(f"[install]   rm -rf {inner}")
                 self.log_lines.append("[install] 或带 sudo：")
                 self.log_lines.append(f"[install]   sudo rm -rf {inner}")
                 return False
 
-    async def install_linux_napcat(self, version: Optional[str] = None) -> bool:
+    async def install_linux_napcat(
+        self, version: Optional[str] = None, sudo_password: str = ""
+    ) -> bool:
         """Linux native 一键安装（与官方 NapCat-Installer 对齐）：
         装 QQ -> 装依赖 -> 下载 NapCat.Shell.zip(SHA256) -> 解压
         -> 写 resources/app/loadNapCat.js -> 改 QQ package.json 的 main -> 生成 launcher.sh。
-        不再编译 .so，也不再创建任何 napcat/napcat.mjs 软链接。
+        不编译 .so，也不创建任何 napcat/napcat.mjs 软链接。sudo 密码仅在本次调用内使用。
         """
+        pw = (sudo_password or "").strip()
         self.napcat_dir.mkdir(parents=True, exist_ok=True)
         self._reset_download_state()
         self.download_state["downloading"] = True
@@ -903,17 +837,17 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
         self.download_state["message"] = "正在准备 Linux 安装"
         self.download_state["current_mirror"] = "准备中"
 
-        # 1) 装/校验系统 LinuxQQ（dpkg -i，需要 sudo；不兼容则自动 purge 后装推荐版）
+        # 1) 校验系统 LinuxQQ（dpkg -i，需sudo；不兼容则自purge 后装推荐版）
         try:
-            ok_qq = await self.ensure_linux_qq_compatible()
+            ok_qq = await self.ensure_linux_qq_compatible(pw)
         except Exception as e:
-            self.log_lines.append(f"[install] ✘ LinuxQQ 安装异常: {e}")
+            self.log_lines.append(f"[install] ✔LinuxQQ 安装异常: {e}")
             self.download_state["phase"] = "failed"
             self.download_state["downloading"] = False
             self.download_state["message"] = f"LinuxQQ 安装失败: {e}"
             return False
         if not ok_qq:
-            self.log_lines.append("[install] ✘ LinuxQQ 未就绪，中止 NapCat 安装")
+            self.log_lines.append("[install] ✔LinuxQQ 未就绪，中止 NapCat 安装")
             self.download_state["phase"] = "failed"
             self.download_state["downloading"] = False
             self.download_state["message"] = "LinuxQQ 未就绪"
@@ -921,33 +855,22 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
 
         # 1.5) 确保全套系统依赖（已装的 apt 会快速跳过）
         self.log_lines.append("[install] 检查系统依赖 ...")
-        pw = (self.plugin.config.get("sudo_password", "") or "").strip()
         if pw and await self._sudo_warm_async(pw):
-            env = {**os.environ, "TERM": "dumb", "DEBIAN_FRONTEND": "noninteractive"}
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "sudo", "-S", "apt-get", "install", "-y", *LINUX_RUNTIME_DEPS,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                    env=env,
-                )
-                out, _ = await asyncio.wait_for(
-                    proc.communicate(input=(pw + "\n").encode()), timeout=600,
-                )
-                if proc.returncode == 0:
-                    self.log_lines.append("[install] ✔ 系统依赖就绪")
-                else:
-                    self.log_lines.append(
-                        f"[install] ⚠ 依赖安装返回非零: "
-                        f"{out.decode('utf-8','ignore')[-200:]}"
-                    )
-            except Exception as e:
-                self.log_lines.append(f"[install] ⚠ 依赖安装异常: {e}")
+            code, out = await linux_tools.run_sudo(
+                self.plugin,
+                ["env", "DEBIAN_FRONTEND=noninteractive",
+                 "apt-get", "install", "-y", *LINUX_RUNTIME_DEPS],
+                pw,
+                timeout=600,
+            )
+            if code == 0:
+                self.log_lines.append("[install] ✔系统依赖就绪")
+            else:
+                self.log_lines.append(f"[install] ⚠依赖安装返回非零: {out[-200:]}")
         else:
             self.log_lines.append("[install] ⚠ 无 sudo 密码，跳过依赖自动安装")
 
-        # 2) 清理旧目录
-        if not await self._backup_inner_napcat_if_needed():
+        # 2) 清理旧目        if not await self._backup_inner_napcat_if_needed():
             self.download_state["phase"] = "failed"
             self.download_state["downloading"] = False
             self.download_state["message"] = "无法清理旧的 napcat 目录"
@@ -958,25 +881,24 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
         try:
             ok_zip = await self.download_napcat(version=version)
         except Exception as e:
-            self.log_lines.append(f"[install] ✘ NapCat 下载异常: {e}")
+            self.log_lines.append(f"[install] ✔NapCat 下载异常: {e}")
             self.download_state["phase"] = "failed"
             self.download_state["downloading"] = False
             self.download_state["message"] = f"NapCat 下载失败: {e}"
             return False
         if not ok_zip:
-            self.log_lines.append("[install] ✘ NapCat.Shell.zip 下载/校验失败")
+            self.log_lines.append("[install] ✔NapCat.Shell.zip 下载/校验失败")
             self.download_state["phase"] = "failed"
             self.download_state["downloading"] = False
             self.download_state["message"] = "NapCat 下载或 SHA256 校验失败"
             return False
 
         # 4) 写入 QQ 注入入口：官方方案是 resources/app/loadNapCat.js +
-        #    package.json 的 main 指向它，不再使用 LD_PRELOAD/.so。
-        self.log_lines.append("[install] 正在写入 QQ 注入入口（loadNapCat.js）...")
+        #    package.json main 指向它，不再使用 LD_PRELOAD/.so        self.log_lines.append("[install] 正在写入 QQ 注入入口（loadNapCat.js..")
         try:
             ok_inject = await self._ensure_qq_loader(pw, self.napcat_dir / "napcat.mjs")
         except Exception as e:
-            self.log_lines.append(f"[install] ✘ 写入注入入口异常: {e}")
+            self.log_lines.append(f"[install] ✔写入注入入口异常: {e}")
             ok_inject = False
         if not ok_inject:
             self.download_state["phase"] = "failed"
@@ -988,7 +910,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
         ok = self._is_new_style_install(self.napcat_dir)
         if ok:
             self.log_lines.append(
-                "[install] ✔ 安装完成（launcher.sh + napcat.mjs + loadNapCat.js 已就位）"
+                "[install] ✔安装完成（launcher.sh + napcat.mjs + loadNapCat.js 已就位）"
             )
             self.download_state["phase"] = "done"
             self.download_state["downloading"] = False
@@ -996,7 +918,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
             self.download_state["current_mirror"] = ""
             self.download_state["message"] = "安装完成"
         else:
-            self.log_lines.append("[install] ✘ 安装后未找到 launcher.sh / napcat.mjs")
+            self.log_lines.append("[install] ✔安装后未找到 launcher.sh / napcat.mjs")
             self.download_state["phase"] = "failed"
             self.download_state["downloading"] = False
             self.download_state["message"] = "安装后未找到启动器"
