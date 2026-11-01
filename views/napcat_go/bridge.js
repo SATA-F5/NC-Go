@@ -683,6 +683,12 @@
             return;
         }
         const running = !!status.running;
+        if (!running && status.is_linux && status.qq_version_compatible === false) {
+            if (!(await confirmDialog(
+                "当前 LinuxQQ 版本不在 NapCat 兼容范围内，启动时可能自动卸载并重装 QQ，存在数据丢失风险。确定继续？",
+                "继续启动"
+            ))) return;
+        }
         if (running) {
             if (!(await confirmDialog("停止 NapCat 会断开 AstrBot 的连接，确定继续？", "停止"))) return;
         }
@@ -717,7 +723,10 @@
     }
 
     async function doRestart() {
-        if (!(await confirmDialog("确定要重启 NapCat 吗？", "重启"))) return;
+        const restartRisk = (S.status && S.status.is_linux && S.status.qq_version_compatible === false)
+            ? "\n\n注意：当前 LinuxQQ 版本不在 NapCat 兼容范围内，重启过程可能自动卸载并重装 QQ，存在数据丢失风险。"
+            : "";
+        if (!(await confirmDialog("确定要重启 NapCat 吗？" + restartRisk, "重启"))) return;
         try {
             const result = await postWithSudo("restart", {}, "重启 NapCat 需要 sudo 密码（仅本次使用）");
             if (result && result.ok) toast("重启指令已发送", "ok", 2200);
@@ -820,6 +829,10 @@
     async function saveConfig() {
         const val = (id) => (($(id) || {}).value || "").trim();
         const sudoPlain = (($("cfg-sudo-password") || {}).value || "").trim();
+        if (sudoPlain && !(await confirmDialog(
+            "将把 sudo 密码加密保存到本机插件配置，之后启动、安装、同步会自动使用它。确定保存？",
+            "保存密码"
+        ))) return;
         let sudoEnc = "";
         if (sudoPlain) {
             try {
@@ -1022,7 +1035,10 @@
         const message = installed
             ? `安装 NapCat 版本「${version}」？旧程序文件会被替换，config 配置会保留。`
             : `将下载并安装 NapCat 版本「${version}」。继续？`;
-        if (!(await confirmDialog(message, installed ? "安装" : "开始安装"))) return;
+        const riskNote = (S.status && S.status.is_linux && S.status.qq_version_compatible === false)
+            ? "\n\n注意：当前 LinuxQQ 版本不在 NapCat 兼容范围内，安装过程可能自动卸载并重装 QQ，存在数据丢失风险。"
+            : "";
+        if (!(await confirmDialog(message + riskNote, installed ? "安装" : "开始安装"))) return;
         const button = $("btn-dl-install");
         if (button) { button.disabled = true; button.textContent = "安装中..."; }
         try {

@@ -11,6 +11,7 @@
    - Linux native 模式可在插件页面「配置 → 运行方式」保存 sudo 密码，之后启动、安装、同步会自动提权，不再每次弹窗
 2. Python 环境（AstrBot 自带），已安装 `aiohttp`
 3. **已经创建好机器人了**
+4. Linux 模式使用的 `QQ_3.2.34_Linux_amd64.deb` 来自本插件 GitHub Release 的固定兼容版本备份，原始来源为官方 LinuxQQ 安装包，仅用于保证 NapCat 兼容版本可复现下载
 
 ## 安装插件
 

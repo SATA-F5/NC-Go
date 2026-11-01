@@ -17,7 +17,7 @@ from typing import Optional, Dict, Any, Set, List, Tuple
 from astrbot.api import logger
 
 PLUGIN_NAME = "pulid_napcat_go_to_astrbot"
-PLUGIN_VERSION = "7.4.2"
+PLUGIN_VERSION = "7.5.0"
 CONFIG_VERSION = 5
 
 NAPCAT_RELEASE_BASE = "https://github.com/NapNeko/NapCatQQ/releases/download"

@@ -42,7 +42,7 @@ from .napcat_manager import NapCatManager
 from .config_syncer import ConfigSyncer
 from . import linux_tools
 
-PLUGIN_CODE_VERSION = "2026-11-01-v742-webui"
+PLUGIN_CODE_VERSION = "2026-11-01-v750"
 
 
 class NapCatGoPlugin(Star):
