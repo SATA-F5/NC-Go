@@ -2,6 +2,7 @@
 1. 版本号更新为 7.5.0
 2. 保存 sudo 密码时增加显式二次确认；LinuxQQ 版本不兼容时，启动、重启、安装前提示可能自动重装 QQ 及数据丢失风险
 3. README 补充 LinuxQQ deb 来源说明，明确其为官方安装包的固定兼容版本备份
+4. 修复 Windows 下载 NapCat 时 `ssl_ctx` 未定义导致的 `Download failed`；下载器统一直接创建 SSL 上下文，并在日志中记录当前平台与目标目录
 
 # 7.4.2
 1. QQ Linux deb 下载源固定为 SATA-F5/NC-Go 仓库（QQ_3.2.34_Linux_amd64.deb），保留多镜像加速回退

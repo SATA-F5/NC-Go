@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import platform
 import shutil
 import subprocess
 import time
@@ -55,8 +56,7 @@ class DownloadMixin:
                              progress_total: int = 0,
                              max_time: int = 900) -> bool:
         try:
-            ssl_ctx = make_ssl_context(strict=False)
-            connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+            connector = aiohttp.TCPConnector(ssl=make_ssl_context(strict=False))
             async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.get(
                     url,
@@ -124,9 +124,8 @@ class DownloadMixin:
         else:
             api_url = f"{api_base}/releases/tags/{version}"
 
-        ssl_ctx = make_ssl_context(strict=True)
         try:
-            connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+            connector = aiohttp.TCPConnector(ssl=make_ssl_context(strict=True))
             async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.get(
                     api_url,
@@ -185,9 +184,8 @@ class DownloadMixin:
         返回 [{tag, name, published_at, prerelease}, ...]，失败返回空列表。
         """
         api_base = "https://api.github.com/repos/NapNeko/NapCatQQ"
-        ssl_ctx = make_ssl_context(strict=True)
         try:
-            connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+            connector = aiohttp.TCPConnector(ssl=make_ssl_context(strict=True))
             async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.get(
                     f"{api_base}/releases?per_page=30",
@@ -255,8 +253,9 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
             with zipfile.ZipFile(archive_path, "r") as zf:
                 zf.extractall(self.napcat_dir)
 
-            # 官方 zip package.json 保持原样；NapCat 入口QQ 侧的
-            # loadNapCat.js 通过绝对 file:// URL 导入，不再需要改这里type            if not IS_WINDOWS:
+            # 官方 zip package.json 保持原样；NapCat 入口 QQ 侧的
+            # loadNapCat.js 通过绝对 file:// URL 导入，不再需要改这里。
+            if not IS_WINDOWS:
                 if not (self.napcat_dir / "napcat.mjs").exists():
                     self.log_lines.append("[download] ✔压缩包内缺少 napcat.mjs")
                     return False
@@ -322,6 +321,7 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
         self.download_state["message"] = "正在下载 NapCat.Shell.zip"
         self.download_state["current_mirror"] = "准备下载"
         self.log_lines.append("[download] 开始下载 NapCat.Shell.zip ...")
+        self.log_lines.append(f"[download] 平台: {platform.system()}，目标目录: {self.napcat_dir}")
 
         try:
             self.napcat_dir.mkdir(parents=True, exist_ok=True)
@@ -332,7 +332,8 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
             self.download_state["phase"] = "failed"
             return False
 
-        # 安装新版本前清理旧文件（保留 config 配置目录        self._clean_old_napcat_install()
+        # 安装新版本前清理旧文件（保留 config 配置目录）
+        self._clean_old_napcat_install()
 
         try:
             if version and str(version).strip():
@@ -403,8 +404,8 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
                 self.log_lines.append(f"[download] [{idx}/{len(urls)}] 尝试: {label}")
                 self.download_state["current_mirror"] = label
                 self.download_state["current_index"] = idx
-                # 官方源一律严TLS；镜像源放开 TLS（但仍受 SHA256 校验兜底                ssl_ctx = make_ssl_context(strict=(label == "official"))
-                connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+                # 官方源一律严 TLS；镜像源放开 TLS（但仍受 SHA256 校验兜底）
+                connector = aiohttp.TCPConnector(ssl=make_ssl_context(strict=(label == "official")))
                 session = aiohttp.ClientSession(connector=connector)
                 try:
                     async with session:
@@ -870,7 +871,8 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
         else:
             self.log_lines.append("[install] ⚠ 无 sudo 密码，跳过依赖自动安装")
 
-        # 2) 清理旧目        if not await self._backup_inner_napcat_if_needed():
+        # 2) 清理旧目录
+        if not await self._backup_inner_napcat_if_needed():
             self.download_state["phase"] = "failed"
             self.download_state["downloading"] = False
             self.download_state["message"] = "无法清理旧的 napcat 目录"
@@ -894,7 +896,8 @@ exec xvfb-run -a -s "-screen 0 1280x800x24" qq --no-sandbox --disable-gpu --disa
             return False
 
         # 4) 写入 QQ 注入入口：官方方案是 resources/app/loadNapCat.js +
-        #    package.json main 指向它，不再使用 LD_PRELOAD/.so        self.log_lines.append("[install] 正在写入 QQ 注入入口（loadNapCat.js..")
+        #    package.json main 指向它，不再使用 LD_PRELOAD/.so
+        self.log_lines.append("[install] 正在写入 QQ 注入入口（loadNapCat.js）...")
         try:
             ok_inject = await self._ensure_qq_loader(pw, self.napcat_dir / "napcat.mjs")
         except Exception as e:
